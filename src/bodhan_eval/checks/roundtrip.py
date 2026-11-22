@@ -126,54 +126,39 @@ def align(src: list[list[str]], tgt: list[list[str]], skip: float = -0.15, merge
     return list(reversed(groups))
 
 
-UNIT_FAMILIES = {
-    "length": [
-        "km",
-        "kilometr",
-        "kilomet",
-        "metr",
-        "meter",
-        "cm",
-        "centimetr",
-        "centimet",
-        "mm",
-        "millimetr",
-        "mil",
-        "inch",
-        "foot",
-        "feet",
-    ],
-    "mass": ["kg", "kilogram", "gram", "milligram", "mg", "tonn", "ton", "pound"],
-    "volume": ["litr", "liter", "ml", "millilitr", "milliliter"],
-    "time": ["second", "minut", "hour", "day", "week", "month", "year", "decad", "century", "centuri"],
-    "temperature": ["celsiu", "fahrenheit", "kelvin"],
-    "currency": ["rupe", "rupee", "dollar", "paisa", "pais"],
-    "month": [
-        "january",
-        "february",
-        "march",
-        "april",
-        "may",
-        "jun",
-        "juli",
-        "july",
-        "august",
-        "september",
-        "october",
-        "november",
-        "december",
-    ],
-    "weekday": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
-}
-_UNIT_LOOKUP = {u: fam for fam, us in UNIT_FAMILIES.items() for u in us}
+# Unit spellings (as produced by ``normalize.stem``) -> canonical unit, per family. Comparing canonical units
+# means "km" and "kilometres" agree; comparing families catches a unit replaced by another kind of unit.
+UNIT_FAMILIES: dict[str, dict[str, str]] = {
+    "length": {
+        "km": "km", "kilometr": "km", "kilomet": "km", "kilometer": "km",
+        "metr": "m", "meter": "m",
+        "cm": "cm", "centimetr": "cm", "centimet": "cm", "centimeter": "cm",
+        "mm": "mm", "millimetr": "mm", "millimeter": "mm",
+        "mil": "mile", "inch": "inch", "foot": "foot", "feet": "foot",
+    },
+    "mass": {"kg": "kg", "kilogram": "kg", "gram": "g", "milligram": "mg", "mg": "mg", "tonn": "t", "ton": "t", "pound": "lb"},
+    "volume": {"litr": "l", "liter": "l", "ml": "ml", "millilitr": "ml", "milliliter": "ml"},
+    "time": {
+        "second": "s", "minut": "min", "hour": "h", "day": "day", "week": "week", "month": "month", "year": "year",
+        "decad": "decade", "century": "century", "centuri": "century",
+    },
+    "temperature": {"celsiu": "C", "fahrenheit": "F", "kelvin": "K"},
+    "currency": {"rupe": "INR", "rupee": "INR", "dollar": "USD", "paisa": "paisa", "pais": "paisa"},
+    "month": {m: m for m in ("january", "february", "march", "april", "may", "jun", "juli", "july", "august",
+                             "september", "october", "november", "december")},
+    "weekday": {d: d for d in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")},
+}  # fmt: skip
+MEASURE_FAMILIES = frozenset({"length", "mass", "volume", "time", "temperature", "currency"})
+_UNIT_LOOKUP = {spelling: (fam, unit) for fam, units in UNIT_FAMILIES.items() for spelling, unit in units.items()}
 
 
 def units_in(words: list[str]) -> dict[str, set[str]]:
+    """Family -> canonical units mentioned in a list of stemmed English words."""
     out: dict[str, set[str]] = {}
     for w in words:
-        fam = _UNIT_LOOKUP.get(w)
-        if fam:
-            out.setdefault(fam, set()).add(w)
+        hit = _UNIT_LOOKUP.get(w)
+        if hit:
+            out.setdefault(hit[0], set()).add(hit[1])
     return out
 
 
@@ -329,19 +314,29 @@ class BackTranslationCheck(Check):
                 source_span=sspan,
                 details={"similarity": round(pair_sim, 3)},
             )
-        s_units, t_units = units_in(s_ws), units_in(t_ws)
-        for fam, su in s_units.items():
+        self._units(r, units_in(s_ws), units_in(t_ws), sspan, tspan)
+
+    def _units(self, r, s_units: dict[str, set[str]], t_units: dict[str, set[str]], sspan, tspan) -> None:
+        """A unit or month changed within its family (km -> m), or a unit replaced by another kind (l -> kg)."""
+        changes = []
+        for fam, su in sorted(s_units.items()):
             tu = t_units.get(fam, set())
             if len(su) == 1 and tu and not (su & tu):
-                self.signal(
-                    r,
-                    "number",
-                    0.5,
-                    f"{fam.title()} word changed: source says {sorted(su)[0]!r}, back-translation says {sorted(tu)[0]!r}",
-                    severity="major",
-                    span=tspan,
-                    source_span=sspan,
-                )
+                changes.append((fam, sorted(su)[0], sorted(tu)[0]))
+        lost = sorted(f for f in s_units if f in MEASURE_FAMILIES and f not in t_units)
+        gained = sorted(f for f in t_units if f in MEASURE_FAMILIES and f not in s_units)
+        if len(lost) == 1 and len(gained) == 1:
+            changes.append((f"{lost[0]}->{gained[0]}", sorted(s_units[lost[0]])[0], sorted(t_units[gained[0]])[0]))
+        for what, old_unit, new_unit in changes:
+            self.signal(
+                r,
+                "number",
+                0.5,
+                f"Unit changed ({what}): source says {old_unit!r}, back-translation says {new_unit!r}",
+                severity="major",
+                span=tspan,
+                source_span=sspan,
+            )
 
 
 # ---------------------------------------------------------------------------
