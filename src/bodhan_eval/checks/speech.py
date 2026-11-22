@@ -86,7 +86,7 @@ def _rate(ctx, lang: str) -> tuple[float, int]:
     return ctx.stats.chars_per_second.get(lang, (langs()["priors"]["chars_per_second"], 0))
 
 
-def _text_chars(text: str) -> int:
+def spoken_chars(text: str) -> int:
     return len(re.sub(r"\s+", "", speakable(text)))
 
 
@@ -166,7 +166,7 @@ class AudioStatsCheck(Check):
             )
         if text:
             rate, k = _rate(ctx, r.item.lang)
-            expected = _text_chars(text) / rate
+            expected = spoken_chars(text) / rate
             ratio = st.active_s / max(expected, 1e-6)
             r.metrics["duration_ratio"] = round(ratio, 3)
             r.state["duration_ratio"] = ratio

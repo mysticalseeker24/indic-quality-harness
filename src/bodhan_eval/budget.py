@@ -30,6 +30,7 @@ class Budget:
         self.reserved = 0.0
         self.llm_tokens = {"prompt": 0, "completion": 0}
         self.refused: dict[str, int] = defaultdict(int)
+        self._local = threading.local()  # per-thread cache-hit count, so the event log can attribute hits to a check
 
     @property
     def total_spent(self) -> float:
@@ -61,6 +62,11 @@ class Budget:
         with self._lock:
             self.used[service] += cost
             self.cache_hits[service] += 1
+        self._local.hits = self.thread_cache_hits() + 1
+
+    def thread_cache_hits(self) -> int:
+        """Cache hits recorded by the calling thread so far (a check runs in one thread, so a delta is per check)."""
+        return int(getattr(self._local, "hits", 0))
 
     def remaining(self) -> float | None:
         if self.max_inr is None:
