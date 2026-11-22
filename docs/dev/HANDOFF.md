@@ -4,49 +4,50 @@ Every Claude Code session reads this first and rewrites "Current state" at each 
 
 ## Current state
 
-- **Phase:** **Phase 1 gate passed** (23 Nov). Next: **Phase 2** (translation checks hardened), after Saksham's go.
-- **Done in Phase 1:**
-  - K12 (mypy clean: `Check.translation(r)` helper, typed containers), K4 (one-pass calibration loader with the three line shapes; `id`+`lang` lines no longer fall back to id-only), K10 (`config.normalize_lang_code`: `hi-IN`/`HI` → `hi`, script variants kept, warn once).
-  - Unit tests: normalize, spans, markup, cache, budget, config, dataset, clients (via stub), stub server.
-  - `bodhan_eval/testing/stub_server.py` (real HTTP, API request rules enforced, fixtures + fault injection, speech-like TTS audio).
-  - `pipeline.py`, `cli.py`, minimal `report.py`, minimal `diff.py` (D17–D22 in DECISIONS.md).
-  - e2e (`tests/e2e/test_cli_e2e.py`, fixtures in `tests/fixtures/e2e/`): exact command as a subprocess, rerun byte-identical at ₹0, empty diff, `--generate`.
-  - `make check`: ruff clean, mypy clean, **221 tests pass** (~15 s).
-- **Paid usage so far:** Bodhan ₹0 of ₹200 · OpenRouter $0 of $10.
-- **Environment (Windows 11):** `.venv` on Python 3.13.9 (CI runs 3.10 and 3.12); GNU make from winget (`ezwinports.make`). In PowerShell put `.venv\Scripts` and `%LOCALAPPDATA%\Microsoft\WinGet\Links` on PATH before `make`. PowerShell 5.1 drops empty-string arguments to native commands: use bash for those. Repo git config: `core.autocrlf=false` (files are LF), GitHub credentials via `gh auth git-credential` (repo-local, account mysticalseeker24). `.claude/` is ignored via `.git/info/exclude`.
-- **Git:** `main` tracks `origin/main` (private). Commit messages are plain conventional commits with **no attribution trailers** (D23). Push in batches of ≥5 commits.
-- **Exam project:** not started — Saksham was reminded at the Phase 1 gate (CLAUDE.md §3).
-- **Repo visibility:** private (must be made public before export — CLAUDE.md §3).
+- **Phase:** **Phase 2 gate passed** (23 Nov). Next: **Phase 3** (judge and LLM layer), after Saksham's go.
+- **Done in Phase 2:**
+  - K3 (`BtLimits` passed as a value; check instances hold no state), K6 (`pipeline.prefetch_transliterations` dedupes per (lang, term); `entity_max_transliterations` caps direct calls; no transliteration for languages without Indic script data), K8 (two-pass clustering; unlocated signals join the strongest cluster of their category).
+  - TESTING.md §2 tables for script, format, numbers (incl. every digit system, Indian grouping, unit/month via back-translation), length, back-translation and entities: `tests/unit/test_check_tables_*.py`. Shared fixtures in `tests/conftest.py` (real `RunContext`, `run_one`, `run_chain`, `fuse_item`).
+  - Fixes found by the tables: `has_markup` ignored Markdown links; units compared by spelling (km vs kilometres false alarm) and only within one family (litres -> kg missed); `entity_match_similarity` 72 -> 85 (D26, see open question 2).
+  - Clean-item false-alarm suite (`tests/e2e/test_false_alarms.py`, 20 items hi/bn/ta): **0 flagged, 0 in review**. A guard rejects control characters in fixtures. Shell heredocs collapse `\\`, so generate fixtures from files and use `chr(92)`.
+  - **Live API finding (D24):** hosted `/translate` and `/transliterate` answer 404; the documented chat transport works. Clients fall back automatically (verified live). Keys are scoped per model (API_NOTES).
+  - Secrets: `.env` filled by Saksham (Bodhan translate/speak/transcribe/transliterate keys, OpenRouter key; `LLM_MODEL` empty until the P3 bake-off). `tests/unit/test_repo_hygiene.py` fails `make check` if `.env` is tracked or any repo file holds a value from it or a key-shaped string.
+  - `make check`: ruff and mypy clean, **313 tests pass** (~20 s).
+- **Paid usage so far:** Bodhan ≈ ₹0.01 of ₹200 (key probe + one live fallback check) · OpenRouter $0 (key limit shows 50).
+- **Environment (Windows 11):** `.venv` on Python 3.13.9 (CI runs 3.10 and 3.12); GNU make from winget. In PowerShell put `.venv\Scripts` and `%LOCALAPPDATA%\Microsoft\WinGet\Links` on PATH before `make`. PowerShell 5.1 drops empty-string arguments to native commands: use bash for those. Repo git config: `core.autocrlf=false`, GitHub credentials via `gh auth git-credential` (repo-local). `.claude/` is ignored via `.git/info/exclude`.
+- **Git:** `main`. Commit messages are plain conventional commits, no attribution trailers (D23). Push in batches of ≥5 commits. **4 commits are not pushed yet** (go out with the next batch).
+- **Exam project:** reminded at the Phase 1 gate; status unknown here.
+- **Repo visibility:** private (make public before export — CLAUDE.md §3).
 
 ## Open questions for Saksham
 
-1. **Transliteration key.** The Bodhan console issues one key per model, but `clients.transliterate` sends `/transliterate` with the *translate* key, likely a 401 on the hosted API. Proposal: optional `BODHAN_TRANSLITERATE_KEY`, falling back to the translate key (env contract change → needs a yes). Verify in the first live smoke.
-2. **Before the repo goes public:** `.gitattributes` exports itself and names `CLAUDE.md` (add `.gitattributes export-ignore`?); README "AI assistance" wording (the spec asks for a brief note); keep `CLAUDE.md` and `docs/dev/` tracked in the public personal repo or not.
-3. **`.env`** is not in the project folder yet (needed before the first paid run; Phase 1 is offline).
-4. setuptools warns that the `project.license` TOML table is deprecated (removal 2027-02-18). Switching to `license = "Apache-2.0"` needs `setuptools>=77` in `[build-system]`. Small, but it is a packaging change.
+1. **Read `BODHAN_TRANSLITERATE_KEY`?** Live probe: keys are scoped per model, so the translate key cannot transliterate. Proposal: clients use `BODHAN_TRANSLITERATE_KEY`, falling back to `BODHAN_API_KEY`, then the translate key. The graders set only the three documented keys, so without it entity checks fall back to Latin and back-translation matching. Env contract change → needs a yes.
+2. **Ack D26:** `entity_match_similarity` raised 72 -> 85 (a default in `defaults.json`, changed as a Phase 2 table fix).
+3. **Before the repo goes public:** `.gitattributes` exports itself and names `CLAUDE.md`; README "AI assistance" wording (the spec asks for a brief note); keep `CLAUDE.md` and `docs/dev/` tracked or not.
+4. setuptools warns that the `project.license` TOML table is deprecated (removal 2027-02-18). `license = "Apache-2.0"` needs `setuptools>=77`.
+5. Security: the keys were pasted into a chat transcript; consider rotating them after the submission.
 
 ## Known issues still open
 
-K1, K2, K11 (P3) · K3, K6, K8 (P2) · K5 (P4) — details in BUILD_PLAN.md. Also: `summary.md` is plain (P6 polishes wording such as "1 bad lines").
+K1, K2, K11 (P3) · K5 (P4) — details in BUILD_PLAN.md. `summary.md` is plain (P6).
 
 ## Next 3 tasks
 
-1. Phase 2: fix K3, K6, K8, each starting with a failing test.
-2. Phase 2: table-driven must-catch / must-not-flag tests for script, format, numbers, length, back-translation, entities (TESTING.md §2), incl. every Indic digit system, Indian grouping, `H2O`/`CO2`, translated `\text{}`, table headers, kept English names, legitimate reordering.
-3. Phase 2 gate: false-alarm suite on clean fixtures → zero tier-0 flags.
+1. Phase 3: K1 (LLM response-format fallback chain, empty-content retry, `--llm-extra-body`) and K11 (AIMD concurrency), test-first against the stub.
+2. Phase 3: K2 (adaptive replicas, jury, repeat-consistency sample, long-text windows) + the four judge CLI flags (D17); judge parsing tests (TESTING.md §2 judge row, §4 LLM rows).
+3. Phase 3: `bakeoff.py` + live smoke (5 items, 1 cheap model, `--max-cost-inr 2`). Show the model list and cost estimate first (CLAUDE.md §3).
 
 ## Read next
 
-- `docs/dev/BUILD_PLAN.md` (P2 section; K3, K6, K8)
-- `docs/dev/TESTING.md` §2
-- `src/bodhan_eval/checks/deterministic.py`, `checks/roundtrip.py`, `fusion.py`
-- `src/bodhan_eval/testing/stub_server.py` (docstring: how fixtures map back-translations)
+- `docs/dev/BUILD_PLAN.md` (P3; K1, K2, K11)
+- `docs/dev/LLM_BAKEOFF.md`, `docs/dev/TESTING.md` §2 (judge row) and §4
+- `src/bodhan_eval/checks/judge.py`, `clients.py` (LLMClient), `data/judge_rubric.md`
 
 ## Next session prompt
 
 ```
 Resume indic-quality-harness. Read CLAUDE.md, then docs/dev/HANDOFF.md and the files it lists under "Read next". Give me the 5-line status and wait for my go.
-Next up: Phase 2 — fix K3, K6 and K8 test-first, then the must-catch / must-not-flag tables for every translation check (TESTING.md §2) and the clean-fixture false-alarm suite.
+Next up: Phase 3 — K1 and K11 test-first against the stub, then K2 and the judge flags, then bakeoff.py and the live smoke (show the model list and cost estimate first).
 ```
 
 ## Session log
@@ -55,3 +56,4 @@ Next up: Phase 2 — fix K3, K6 and K8 test-first, then the must-catch / must-no
 |---|---|---|---|
 | 0 | 23 Nov 2026 | claude.ai | Design, research, drafts, starter pack, prompt playbook |
 | 1 | 23 Nov 2026 | coding session | Phase 1: K12/K4/K10, core unit tests, stub server, pipeline/CLI/report/diff, offline e2e + determinism; repo connected; commit history rewritten without trailers |
+| 1b | 23 Nov 2026 | coding session | Phase 2: K3/K6/K8, check tables, 4 table-driven fixes, clean false-alarm suite (0/20); .env + hygiene test; live probe found 404 text routes → chat-transport fallback |
