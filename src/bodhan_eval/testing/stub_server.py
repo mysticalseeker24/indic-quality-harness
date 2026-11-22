@@ -9,7 +9,8 @@ Endpoints and the request rules they enforce (from docs/dev/API_NOTES.md):
   POST /transliterate              text + language
   POST /v1/audio/speech            model "indic-speak", input, voice, instructions (JSON string with "lang")
   POST /v1/audio/transcriptions    multipart: file, model "indic-transcribe"; <= 30 s of audio
-  POST .../chat/completions        OpenAI chat format
+  POST .../chat/completions        OpenAI chat format: the judge LLM, or (model indic-translate /
+                                   indic-transliterate) Bodhan's chat transport for the two text routes
 
 Responses come from lookup tables in a fixture JSON:
 
@@ -49,6 +50,11 @@ SAMPLE_RATE = 24000
 STUB_CHARS_PER_SECOND = 13.0  # matches the speaking-rate prior in langs.json
 MAX_TRANSCRIBE_SECONDS = 30.0
 REJECTED_TRANSLATE_FIELDS = ("temperature", "max_tokens", "stream")
+# Bodhan text models on the chat-completions transport: model -> (fixture table, language field)
+BODHAN_CHAT_MODELS = {
+    "indic-translate": ("translate", "target_language"),
+    "indic-transliterate": ("transliterate", "language"),
+}
 
 
 def speech_like(seconds: float, sr: int = SAMPLE_RATE) -> np.ndarray:
@@ -228,6 +234,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _chat(self, body: bytes) -> tuple[int, str, bytes, dict]:
         req = _json(body)
+        if req.get("model") in BODHAN_CHAT_MODELS:
+            return self._bodhan_chat(req)
         messages = req.get("messages") or []
         user = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
         content = None
@@ -253,6 +261,34 @@ class _Handler(BaseHTTPRequestHandler):
         }
         details = {"model": req.get("model"), "response_format": "response_format" in req}
         return 200, "application/json", _dumps(resp), details
+
+    def _bodhan_chat(self, req: dict) -> tuple[int, str, bytes, dict]:
+        """The chat-completions transport of indic-translate / indic-transliterate (same tables as the routes)."""
+        if not self.headers.get("Authorization", "").removeprefix("Bearer ").strip():
+            raise _ApiError(401, "invalid_api_key_error", "missing bearer key")
+        kind, lang_field = BODHAN_CHAT_MODELS[req["model"]]
+        messages = req.get("messages") or []
+        if len(messages) != 1 or messages[0].get("role") != "user" or not isinstance(messages[0].get("content"), str):
+            raise _ApiError(400, "invalid_prompt", "exactly one user turn and no system turn")
+        bad = [k for k in REJECTED_TRANSLATE_FIELDS if k in req]
+        if bad or not req.get(lang_field):
+            raise _ApiError(400, "invalid_request_error", f"bad {kind} request (rejected fields: {bad})")
+        out, truncated = self._lookup(kind, str(req[lang_field]), messages[0]["content"])
+        resp = {
+            "id": "stub-bodhan-chat",
+            "object": "chat.completion",
+            "created": 0,
+            "model": req["model"],
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": out},
+                    "finish_reason": "length" if truncated else "stop",
+                }
+            ],
+            "usage": {"completion_tokens": len(out) // 3 + 1},
+        }
+        return 200, "application/json", _dumps(resp), {"model": req["model"], lang_field: req[lang_field]}
 
     def _lookup(self, kind: str, lang: str, text: str) -> tuple[str, bool]:
         """(output, truncated). A table value is the output, or {"text": ..., "truncated": true}."""

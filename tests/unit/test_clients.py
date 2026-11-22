@@ -112,6 +112,30 @@ def test_transliterate(stub: StubServer, cache: Cache) -> None:
     assert bodhan(stub, cache).transliterate("Newton", "hi") == "न्यूटन"
 
 
+def test_translate_uses_chat_transport_when_route_is_missing(stub: StubServer, cache: Cache) -> None:
+    """The hosted gateway answered 404 on /translate (API_NOTES, 23 Nov); the chat transport serves the same model."""
+    stub.add_fault("/translate", 404, times=-1, code="404", message="Not Found")
+    c = bodhan(stub, cache)
+    assert c.translate("Water boils.", "hi") == {"translation": "पानी उबलता है।", "truncated": False, "cached": False}
+    assert c.translate("Cut short.", "hi")["truncated"] is True  # finish_reason "length"
+    assert [r["path"] for r in stub.requests] == ["/translate", "/v1/chat/completions", "/v1/chat/completions"]
+    assert stub.requests[1]["model"] == "indic-translate"
+
+
+def test_transliterate_uses_chat_transport_when_route_is_missing(stub: StubServer, cache: Cache) -> None:
+    stub.add_fault("/transliterate", 404, times=-1)
+    assert bodhan(stub, cache).transliterate("Newton", "hi") == "न्यूटन"
+    assert stub.requests[-1]["model"] == "indic-transliterate"
+
+
+def test_other_client_errors_do_not_switch_transport(stub: StubServer, cache: Cache) -> None:
+    stub.add_fault("/translate", 400, times=1, code="unsupported_language")
+    with pytest.raises(BodhanError) as err:
+        bodhan(stub, cache).translate("Water boils.", "xx")
+    assert err.value.status == 400
+    assert [r["path"] for r in stub.requests] == ["/translate"]
+
+
 def test_missing_key_is_service_unavailable_before_any_request(stub: StubServer, cache: Cache) -> None:
     budget = Budget(1.0)
     c = bodhan(stub, cache, budget, translate_key=None)

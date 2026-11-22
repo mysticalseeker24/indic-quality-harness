@@ -7,6 +7,7 @@ Every call goes through the same path:
 Bodhan endpoints (https://console.bodhan.ai/api-docs/):
   POST /translate                 indic-translate      (no model field; target_language only)
   POST /transliterate             indic-transliterate
+  POST /v1/chat/completions       either text model    (documented second transport; used when a route answers 404)
   POST /v1/audio/speech           indic-speak          (WAV PCM16 24 kHz mono)
   POST /v1/audio/transcriptions   indic-transcribe     (<= 30 s of audio per request)
 
@@ -38,6 +39,7 @@ TRANSLATE_MODEL = "indic-translate"
 TRANSLITERATE_MODEL = "indic-transliterate"
 SPEAK_MODEL = "indic-speak"
 TRANSCRIBE_MODEL = "indic-transcribe"
+CHAT_PATH = "/v1/chat/completions"  # Bodhan's second, documented transport for the text models
 
 
 class ServiceUnavailable(RuntimeError):
@@ -86,6 +88,7 @@ class BodhanClient:
         self.costs = defaults()["costs_inr"]
         n = max(1, settings.concurrency)
         self._slots = {svc: threading.BoundedSemaphore(n) for svc in ("translate", "speak", "transcribe")}
+        self._chat_transport: set[str] = set()  # product routes the gateway answered 404 for (see _text_call)
 
     # ---- plumbing -------------------------------------------------------
     def _key_for(self, service: str) -> str:
@@ -157,17 +160,40 @@ class BodhanClient:
         self.cache.put(key, kind, value, cost)
         return value, False
 
+    def _text_call(self, service: str, route: str, model: str, out_field: str, body: dict) -> tuple[str, bool, int]:
+        """(text, truncated, billed output tokens) from a Bodhan text model.
+
+        Uses the documented product route. If the gateway does not serve it (HTTP 404, seen on the hosted API
+        on 23 Nov 2026), it switches to the documented chat-completions transport of the same model for the rest
+        of the run. The docs state that both transports give identical output, so cached results stay valid.
+        """
+        if route not in self._chat_transport:
+            try:
+                j = self._post(service, route, json_body=body).json()
+                tokens = int((j.get("usage") or {}).get("completion_tokens", 0))
+                return str(j.get(out_field) or ""), bool(j.get("truncated", False)), tokens
+            except BodhanError as e:
+                if e.status != 404:
+                    raise
+                log.warning("%s answered 404; using the chat-completions transport for %s", route, model)
+                self._chat_transport.add(route)
+        chat = {"model": model, "messages": [{"role": "user", "content": body["text"]}]}
+        chat.update({k: v for k, v in body.items() if k != "text"})
+        j = self._post(service, CHAT_PATH, json_body=chat).json()
+        choice = (j.get("choices") or [{}])[0]
+        text = str((choice.get("message") or {}).get("content") or "")
+        tokens = int((j.get("usage") or {}).get("completion_tokens", 0))
+        return text, choice.get("finish_reason") == "length", tokens
+
     # ---- translation ------------------------------------------------------
     def translate(self, text: str, target_language: str) -> dict:
         """Returns {"translation", "truncated", "cached"}. Splits and retries on 413."""
         estimate = max(32, len(text)) * 1.5 * self.costs["translate_per_output_token"]
 
         def call():
-            r = self._post("translate", "/translate", json_body={"text": text, "target_language": target_language})
-            body = r.json()
-            tokens = int((body.get("usage") or {}).get("completion_tokens", 0))
-            value = {"translation": body.get("translation", ""), "truncated": bool(body.get("truncated", False))}
-            return value, tokens * self.costs["translate_per_output_token"]
+            body = {"text": text, "target_language": target_language}
+            out, truncated, tokens = self._text_call("translate", "/translate", TRANSLATE_MODEL, "translation", body)
+            return {"translation": out, "truncated": truncated}, tokens * self.costs["translate_per_output_token"]
 
         try:
             value, cached = self._cached(
@@ -201,12 +227,11 @@ class BodhanClient:
         estimate = max(16, len(text)) * 2 * self.costs["translate_per_output_token"]
 
         def call():
-            r = self._post(
-                "translate", "/transliterate", json_body={"text": text, "language": language, "script": "native"}
+            body = {"text": text, "language": language, "script": "native"}
+            out, _, tokens = self._text_call(
+                "translate", "/transliterate", TRANSLITERATE_MODEL, "transliteration", body
             )
-            body = r.json()
-            tokens = int((body.get("usage") or {}).get("completion_tokens", 0))
-            return body.get("transliteration", ""), tokens * self.costs["translate_per_output_token"]
+            return out, tokens * self.costs["translate_per_output_token"]
 
         value, _ = self._cached(
             "translate", "transliterate", TRANSLITERATE_MODEL, {"language": language}, text, estimate, call
