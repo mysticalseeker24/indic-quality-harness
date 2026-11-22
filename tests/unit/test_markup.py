@@ -111,6 +111,7 @@ def test_table_cols_keeps_escaped_pipe_inside_cell() -> None:
         pytest.param("Run `ls` now", True, id="inline-code"),
         pytest.param("very **bold**", True, id="bold"),
         pytest.param("| a | b |\n|---|---|", True, id="table"),
+        pytest.param("See [docs](https://example.org/a).", True, id="markdown-link"),
     ],
 )
 def test_has_markup(text: str, expected: bool) -> None:

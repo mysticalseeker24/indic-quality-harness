@@ -139,7 +139,7 @@ def md_lines(text: str) -> list[Line]:
 
 
 def has_markup(text: str) -> bool:
-    if math_segments(text) or "$" in text or INLINE_CODE_RE.search(text) or "**" in text:
+    if math_segments(text) or "$" in text or INLINE_CODE_RE.search(text) or "**" in text or LINK_RE.search(text):
         return True
     return any(line.kind not in ("text", "blank") for line in md_lines(text))
 

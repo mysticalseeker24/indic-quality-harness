@@ -88,3 +88,30 @@ def run_one() -> Callable[..., ItemResult]:
         return r
 
     return run
+
+
+@pytest.fixture
+def run_chain() -> Callable[..., ItemResult]:
+    """Run several checks in order on one item (later checks see earlier state, e.g. the back-translation)."""
+
+    def run(checks: list[type[Check]], ctx: RunContext, source: str, translation: str, lang: str = "hi") -> ItemResult:
+        r = ItemResult(item=Item(id="t", lang=lang, source=source, translation=translation))
+        for cls in checks:
+            r.checks[cls.name] = run_check(cls(), r, ctx)
+        return r
+
+    return run
+
+
+def fused(r: ItemResult) -> tuple[list, list]:
+    """(flags, review queue) for an item's signals under the default thresholds."""
+    from bodhan_eval.fusion import fuse
+
+    d = defaults()
+    flags, uncertain, _ = fuse(r.item, r.signals, d["flag_threshold"], d["uncertain_margin"])
+    return flags, uncertain
+
+
+@pytest.fixture
+def fuse_item() -> Callable[[ItemResult], tuple[list, list]]:
+    return fused
