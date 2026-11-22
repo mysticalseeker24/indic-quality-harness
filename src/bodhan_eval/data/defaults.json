@@ -16,7 +16,7 @@
     "bt_clause_max_coverage": 0.34,
     "bt_extra_min_content_words": 3,
     "bt_extra_min_share": 0.5,
-    "entity_match_similarity": 72,
+    "entity_match_similarity": 85,
     "entity_max_transliterations": 8,
     "asr_min_deleted_words": 3,
     "asr_min_deleted_chars": 10,
