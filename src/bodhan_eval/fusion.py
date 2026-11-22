@@ -2,7 +2,10 @@
 
 1. Cluster signals that are about the same problem: same area (translation or
    speech), compatible categories, and overlapping location (translation span or
-   source span). Signals with no location join a cluster of the same category.
+   source span). Located signals are clustered first; then each signal with no
+   location ("something is missing somewhere") joins the *strongest* cluster of
+   its own category, so it corroborates the most likely problem instead of
+   lifting a weak candidate over the threshold or becoming a flag of its own.
 2. Combine evidence with a noisy-OR over the strongest signal of each check
    (each judge replica counts as its own source):  P = 1 - prod(1 - s_i).
    Two independent weak signals (judge + back-translation, or two judge replicas)
@@ -46,15 +49,15 @@ class Cluster:
         self.members = [s]
 
     def accepts(self, s: Signal) -> bool:
+        """A located signal joins when area and category are compatible and the locations overlap."""
         if category_area(s.category) != category_area(self.members[0].category):
             return False
         if not any(_compatible(s.category, m.category) for m in self.members):
             return False
-        for m in self.members:
-            if overlaps(s.span, m.span) or overlaps(s.source_span, m.source_span):
-                return True
-        same_cat = any(m.category == s.category for m in self.members)
-        return same_cat and (not _located(s) or not any(_located(m) for m in self.members))
+        return any(overlaps(s.span, m.span) or overlaps(s.source_span, m.source_span) for m in self.members)
+
+    def has_category(self, cat: str) -> bool:
+        return any(m.category == cat for m in self.members)
 
     def score(self) -> float:
         best: dict[tuple, float] = {}
@@ -74,13 +77,22 @@ class Cluster:
         return max(totals, key=lambda c: (round(totals[c], 6), -prec.index(c) if c in prec else -99))
 
 
+def _signal_order(s: Signal) -> tuple:
+    return (-s.score, s.check, s.category, s.span or (-1, -1))
+
+
 def cluster_signals(signals: list[Signal]) -> list[Cluster]:
     clusters: list[Cluster] = []
-    for s in sorted(signals, key=lambda x: (-x.score, x.check, x.category, x.span or (-1, -1))):
-        for c in clusters:
-            if c.accepts(s):
-                c.members.append(s)
-                break
+    for s in sorted((s for s in signals if _located(s)), key=_signal_order):
+        target = next((c for c in clusters if c.accepts(s)), None)
+        if target is None:
+            clusters.append(Cluster(s))
+        else:
+            target.members.append(s)
+    for s in sorted((s for s in signals if not _located(s)), key=_signal_order):
+        same = [c for c in clusters if c.has_category(s.category)]
+        if same:  # strongest first; ties -> the earliest cluster, so the result is deterministic
+            max(same, key=lambda c: (round(c.score(), 9), -clusters.index(c))).members.append(s)
         else:
             clusters.append(Cluster(s))
     return clusters
