@@ -1,0 +1,84 @@
+# Test plan
+
+Goal: nothing fails in Bodhan's fresh container, and no number in the report is wrong. Offline tests (no keys, no network) run on every commit; live tests are tiny, paid and marked `@pytest.mark.live`.
+
+Layout: `tests/unit/test_<module>.py`, `tests/e2e/`, `tests/fixtures/` (small JSONL, stub-server response tables, synthetic audio generated at test time, never committed as audio).
+
+## 1. Unit tests — core utilities
+
+- **normalize**: every Indic digit system (Devanagari, Bengali, Tamil, Telugu, Kannada, Malayalam, Gujarati, Gurmukhi, Odia, Arabic-Indic, Extended Arabic-Indic) → ASCII; NFC with nukta as one vs two code points; ZWJ/ZWNJ removed; quotes/dashes/danda unified; `to_original()` round-trips spans; `ascii_digits` is length-preserving; `canonical_number` for `1,00,000`, `100,000`, `3.50`, `007`, `२५`; `stem` equates boil/boils/boiling, time/times, stop/stopped; `segments` keeps decimals intact and splits on danda.
+- **spans**: overlap incl. zero-width tolerance; `tokens_to_span`/`span_to_token_range` inverse; `word_alignment` opcodes on known lists; CER edge cases (empty).
+- **markup**: `$`, `$$`, `\(`, `\[`, `\begin{env}`; escaped `\$`; tables with/without outer pipes; separator rows; `has_markup` false for plain prose; `unbalanced_dollars`; brace balance; `\text{}` contents ignored by `math_key`.
+- **cache**: same input → same key; any param change → new key; blob round-trip; thread safety (parallel puts).
+- **budget**: refuses before crossing the cap; reservations released on failure; cache hits counted in `used` not `spent`.
+- **config/dataset**: bad JSON line, non-object line, missing fields, duplicate `(id, lang)`, unknown lang, `hi-IN` normalised, relative audio path resolved, missing audio noted, labels with unknown type counted, `span_on` handling, the three calibration line shapes.
+
+## 2. Unit tests — every check: must-catch and must-not-flag tables
+
+| Check | Must catch | Must NOT flag |
+|---|---|---|
+| script | whole text English; one sentence English; Tamil text for `hi`; Marathi text for `hi`; Bengali text for `as` | kept names/acronyms (`Isaac Newton`, `DNA`, `H2O`); LaTeX, code, URLs; a single kept technical word |
+| format | table row lost a pipe; separator row missing; heading `#` dropped; stray `$`; changed formula; unbalanced braces; unmatched `**`; link URL altered | translated table headers; translated `\text{}`; digits-only formula change (owned by numbers); plain prose |
+| numbers | digit changed; decimal changed; number dropped; number added; `km`→`m` via back-translation; month changed | `२५` vs `25`; `1,00,000` vs `100,000`; number written as a word when the back-translation has it; source "three" → target `3`; `H2O`; list numbering |
+| back-translation | whole sentence missing; clause missing; extra sentence; meaning drift | paraphrase; sentence merge/split (2:1); reordered sentences; synonyms |
+| entities | name replaced by another name; garbled transliteration | name kept in Latin; correct transliteration; translated-by-meaning names confirmed by back-translation |
+| length | extreme ratio vs language median | normal variance; languages with too few items use the prior |
+| judge (parsing) | valid JSON → signals with exact spans | bad JSON; out-of-range or reversed indices; unknown category; missing location for non-omission; Indic text in explanation → masked |
+| audio_stats | 2 s internal silence; edge silence; clipping; noise burst; empty audio | natural short pauses; quiet but clean speech |
+| asr | deletion run mid-text; truncated tail; repeated phrase; looped trigram; poor transcript everywhere → garbled | scattered substitutions; numbers spoken as words; nukta/candrabindu spelling variants; a truncation must not also raise garbled |
+
+Each row is a separate parametrised test case with a readable id.
+
+## 3. Fusion and calibration
+
+- One judge replica alone → `uncertain`; two agreeing replicas → flag; deterministic proof alone → flag; judge + back-translation → flag.
+- Clustering across translation span vs source span; category precedence on ties; narrowest span chosen; unlocated signal joins its category's cluster (K8).
+- `match_item` ranks; `evaluate` arithmetic on a hand-computed 6-item case; `tune` picks the expected threshold on a crafted case; categories below `min_labels_to_tune` keep defaults; CV returns None on tiny sets.
+
+## 4. Clients and the stub server (no network)
+
+- Translate 200 / 413 (split and rejoin) / 429 with `retry-after` / 500 then success / retries exhausted → `BodhanError`; `truncated: true` recorded.
+- TTS 422 → not retried, error recorded; WAV returned and cached as blob.
+- ASR: >30 s audio is chunked (assert each request ≤ 30 s).
+- LLM: `json_schema` rejected → falls back to `json_object` → falls back to plain; empty content → retry with more tokens; non-JSON → `None` handled.
+- Missing keys → `ServiceUnavailable` → checks skipped, run continues.
+
+## 5. End-to-end (offline, exact command)
+
+- 10-item dataset: hi, ta, bn items with and without translation/audio/reference/labels; one unknown language code; one broken JSON line; one missing audio file; one Markdown table + LaTeX item.
+- Run `python -m bodhan_eval --dataset … --langs hi,ta,bn,xx --out tmp/report --calibration …` as a subprocess against the stub server.
+- Assert: exit code 0; the 5 files exist; schema of each `items.jsonl` line; bad line counted; skipped checks have reasons; flags have spans inside the text; LLM output never contains Indic (scan judge evidence).
+- Rerun → byte-identical report files; `run_meta.json` shows ₹0 spent.
+- `--baseline` run on a modified dataset → `diff.md` lists exactly the planted regression and improvement.
+- `--generate` path with stub TTS → audio written, `generated.jsonl` valid.
+
+## 6. Generalisation and robustness matrix (P7, offline where possible)
+
+| Axis | Values |
+|---|---|
+| Languages | hi, ta, bn (dev); te, mr, gu (held out); `ks-Deva`, `sd-Arab`, unknown `xx` |
+| LLM | 4–6 models from the bake-off incl. one weak/cheap model; LLM unset |
+| Labels | inline `labels`; `--calibration` full items; id-only label lines; unknown type strings; spans on source; no labels |
+| Audio | WAV 24 kHz; WAV 16 kHz; MP3; >30 s; missing; empty/silent |
+| Content | single sentence; multi-paragraph; Markdown table; LaTeX-heavy; lists/headings |
+| Run modes | plain; `--generate`; `--baseline`; tight `--max-cost-inr` (must stop cleanly, report skipped checks) |
+
+**Leave-one-language-out**: calibrate on two dev languages, score the third; report the drop. **Clean-item false-alarm suite**: tricky clean items (numbers in words, transliterated terms, reordered sentences, translated table headers) must stay ≤ 10 % flagged.
+
+## 7. Rule-compliance guards (protect against automatic fail)
+
+- AST scan: only `clients.py` imports `requests`/`openai`; no imports of other speech/translation/QE libraries (deny-list: whisper, faster_whisper, transformers, comet, googletrans, deep_translator, langdetect, fasttext, sarvam…).
+- Model-id literals in `src/` ⊆ the Cookbook rules list.
+- Judge prompt contains token indices and the "never write Indian-script text" rule; `strip_indic` applied to all LLM prose.
+- Injector runs with an LLM client that raises on any call.
+- Secret scan: run the Cookbook validator (`make validate`) and grep for `sk-` patterns in the repo.
+- `.env`, audio, `outputs/` not tracked (`git ls-files` check in CI).
+
+## 8. Live tests (paid, tiny, `-m live`)
+
+- 3 items × hi/ta/bn with `--generate`, `--max-cost-inr 3`: translations returned, audio plays, ASR text non-empty, cost meter within ±20 % of the console usage.
+- Judge with the chosen default model on 5 items: valid JSON, sensible flags.
+
+## 9. Performance
+
+- Stub server with 300–800 ms simulated latency, 200 items × 3 languages with speech: total wall time projected under 30 minutes at default concurrency. Record the number in README "Cost and runtime".

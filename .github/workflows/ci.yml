@@ -1,0 +1,32 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check src tests
+      - run: mypy
+      - run: pytest -q
+  cookbook-validator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: git clone --depth 1 https://github.com/Bodhan-AI/Bodhan-AI-Cookbook /tmp/cookbook
+      - run: python /tmp/cookbook/scripts/validate_recipe.py .
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t bodhan-eval . && docker run --rm bodhan-eval --help
