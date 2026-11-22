@@ -18,3 +18,10 @@
 | D14 | 23 Nov | Dataset: own writing on NCERT-syllabus topics + CC BY-SA excerpts; no verbatim NCERT text | NCERT text is all-rights-reserved; the PR is public |
 | D15 | 23 Nov | Library API (`bodhan_eval.api`) alongside the CLI | Reuse as the QA gate in the dubbing / narrated-lesson project |
 | D16 | 23 Nov | Multi-chat workflow: HANDOFF.md + checkpoint protocol + ask-first list + human milestones in CLAUDE.md; prompts in PROMPTS.md | No context lost between Claude Code chats; Saksham approves every major change, paid run and the public-repo step |
+| D17 | 23 Nov | `--judge-max-replicas`, `--judge-models`, `--judge-repeat-sample`, `--llm-extra-body` arrive in P3 together with their features | No CLI flags that silently do nothing |
+| D18 | 23 Nov | A minimal `diff.md` already in P1 (full version in P6) | `--baseline` is part of the graded command and must always produce the file |
+| D19 | 23 Nov | Check status `not_applicable` is separate from `skipped`; a check that raises contributes no signals | Skip counts stay meaningful; half-finished evidence never reaches fusion |
+| D20 | 23 Nov | `id`+`lang` label lines match only that pair (no fallback to id-only); an unreadable `--calibration` file is a note, not exit 1 | Labels never land on the wrong language; a bad label file does not stop a graded run |
+| D21 | 23 Nov | The stub server ships in the package (`bodhan_eval.testing.stub_server`) | One stub for tests and offline demos; the harness itself has no test-only code paths |
+| D22 | 23 Nov | `--langs all` means no language filter (unknown codes included) | "Accept any language" with graceful degradation |
+| D23 | 23 Nov | Commit messages carry no tool attribution trailers; history rewritten once and force-pushed with Saksham's explicit yes | Saksham's request: commits are authored by him only |

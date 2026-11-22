@@ -21,12 +21,12 @@ Legend: ✅ draft written and smoke-tested · 🟡 draft with known issues (see 
 | `checks/speech.py`, `audio.py` | 🟡 | waveform stats, chunked ASR, alignment, second opinion (K5) |
 | `fusion.py` | 🟡 | clustering + noisy-OR + thresholds (K8) |
 | `calibrate.py` | ✅ | matching, metrics, per-category tuning, 2-fold CV |
-| `dataset.py` | 🟡 | loader + calibration file (K4, K10) |
+| `dataset.py` | ✅ | loader + one-pass calibration file; K4, K10 fixed in P1 |
 | `generate.py` | ✅ | translation fill-in, budgeted speech planner, TTS chunking |
-| `cli.py`, `pipeline.py` | ⬜ | P1 |
-| `testing/stub_server.py` (+ fakes) | ⬜ | P1 — local HTTP stub for Bodhan + OpenAI-compatible endpoints |
-| `report.py` | ⬜ | P1 minimal, P6 polished |
-| `diff.py` | ⬜ | P6 |
+| `cli.py`, `pipeline.py` | ✅ | P1: the runnable command; P3 adds the judge flags (D17) |
+| `testing/stub_server.py` (+ fakes) | ✅ | P1 — local HTTP stub for Bodhan + OpenAI-compatible endpoints, fault injection |
+| `report.py` | 🟡 | P1 minimal done (deterministic files, plain summary.md); P6 polished |
+| `diff.py` | 🟡 | P1 minimal (D18); P6 full |
 | `inject.py` | ⬜ | P5 |
 | `score.py` | ⬜ | P5 — hidden-test-style scorecard |
 | `bakeoff.py` | ⬜ | P3 — judge model comparison |
@@ -38,12 +38,12 @@ Legend: ✅ draft written and smoke-tested · 🟡 draft with known issues (see 
 - **K1 (P3) `clients.LLMClient`**: implement the response-format fallback chain `json_schema (strict)` → `json_object` → plain prompt, remembering per model what worked. Add `--llm-extra-body '<json>'` merged into requests via `extra_body` (e.g. OpenRouter `{"reasoning": {"effort": "low"}}` to cap reasoning tokens) — optional, off by default, so the harness stays provider-neutral. If `message.content` is empty (reasoning models that used all `max_tokens`), retry once with double `max_tokens`. Record provider-reported cost when the response includes it.
 - **K2 (P3) `checks/judge.py`**: (a) adaptive replicas — run 2; if their category sets disagree, run a 3rd and take the majority (`--judge-max-replicas`, default 3); (b) `--judge-models a,b,c` jury using the same base URL/key, falling back to `LLM_MODEL`; (c) repeat-consistency: on a deterministic sample (`--judge-repeat-sample 0.1`), re-send the *identical* prompt with a cache-bypass marker in the cache key only (not in the prompt) and report agreement separately from order-consistency; (d) translations over ~1,200 tokens: judge in overlapping windows of segments and offset token indices back.
 - **K3 (P2) `BackTranslationCheck`** stores `extra_min/extra_share` on the shared check instance; pass them as locals to `_partial`.
-- **K4 (P1) `dataset.apply_calibration_file`** reads the file twice; restructure into one pass and unit-test the three line shapes (full item, id+lang+labels, id+labels).
+- ✅ fixed in P1 — **K4 (P1) `dataset.apply_calibration_file`** reads the file twice; restructure into one pass and unit-test the three line shapes (full item, id+lang+labels, id+labels).
 - **K5 (P4) speech localisation**: time→char mapping is proportional. Improve with chunk anchors: each ASR chunk has a known time range; align chunk transcripts separately so word positions inherit chunk times.
 - **K6 (P2) entities**: cap transliteration calls per item; batch unique entities across the dataset first (dedupe) to save calls.
 - **K8 (P2) fusion**: an unlocated signal (no span, no source span) of category C should join the strongest existing cluster of C instead of producing a separate flag.
-- **K10 (P1) language codes**: normalise `hi-IN`/`HI` → `hi` (warn once); keep script variants (`ks-Deva`, `mni-Beng`, `sd-Arab`).
-- **K12 (P1) type checking**: `mypy` currently reports 41 annotation-level errors in the drafts (mostly `arg-type`/`index` on `Optional` spans and untyped empty lists in calibrate.py, roundtrip.py, deterministic.py, speech.py, judge.py, clients.py). Fix them so `make check` is green; no behaviour changes.
+- ✅ fixed in P1 — **K10 (P1) language codes**: normalise `hi-IN`/`HI` → `hi` (warn once); keep script variants (`ks-Deva`, `mni-Beng`, `sd-Arab`).
+- ✅ fixed in P1 — **K12 (P1) type checking**: `mypy` currently reports 41 annotation-level errors in the drafts (mostly `arg-type`/`index` on `Optional` spans and untyped empty lists in calibrate.py, roundtrip.py, deterministic.py, speech.py, judge.py, clients.py). Fix them so `make check` is green; no behaviour changes.
 - **K11 (P3) adaptive concurrency**: on 429, halve the service's concurrency (min 1); after 20 consecutive successes, +1 up to the configured max (AIMD, like TCP congestion control).
 
 ## P1 — Foundation and the runnable command
@@ -64,7 +64,7 @@ Build:
 - `cli.py`: argparse with the required flags plus: `--cache-dir`, `--concurrency`, `--thresholds`, `--no-judge`, `--judge-replicas`, `--judge-max-replicas`, `--judge-models`, `--judge-repeat-sample`, `--no-speech`, `--speech-sample`, `--voice lang=Name`, `--label-span-on {translation,source}`, `--llm-extra-body`, `--llm-inr-per-1k-tokens`, `--log-level`. `--langs` also accepts `all`.
 - `report.py` (minimal): `items.jsonl`, `summary.json`, `calibration.json`, a plain `summary.md`; deterministic serialisation helpers.
 
-Gate P1: `make check` green; e2e test runs the exact command against the stub server on a 10-item dataset (hi/ta/bn + one unknown code + one broken line + one missing audio) and asserts the 5 files; rerun → identical bytes and ₹0 spent; unit tests for normalize, spans, markup, cache, budget, dataset.
+Gate P1 (**passed 23 Nov**: `make check` green, 221 tests): `make check` green; e2e test runs the exact command against the stub server on a 10-item dataset (hi/ta/bn + one unknown code + one broken line + one missing audio) and asserts the 5 files; rerun → identical bytes and ₹0 spent; unit tests for normalize, spans, markup, cache, budget, dataset.
 
 ## P2 — Translation checks hardened
 
