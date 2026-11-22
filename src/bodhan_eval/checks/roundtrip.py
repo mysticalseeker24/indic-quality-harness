@@ -116,7 +116,9 @@ def align(src: list[list[str]], tgt: list[list[str]], skip: float = -0.15, merge
     groups = []
     i, j = n, m
     while i > 0 or j > 0:
-        di, dj = back[i][j]
+        step = back[i][j]
+        assert step is not None, "every cell except (0, 0) is reachable by a skip move"
+        di, dj = step
         groups.append((list(range(i - di, i)), list(range(j - dj, j))))
         i, j = i - di, j - dj
     return list(reversed(groups))
@@ -187,7 +189,7 @@ class BackTranslationCheck(Check):
         return bool(r.item.translation and r.item.translation.strip()) and r.item.lang != "en"
 
     def run(self, r: ItemResult, ctx) -> None:
-        tgt, src = r.item.translation, r.item.source
+        tgt, src = self.translation(r), r.item.source
         segs = [(a, b) for a, b in segments(tgt) if re.search(r"[^\W\d_]", tgt[a:b])]
         if not segs:
             raise SkipCheck("no translatable text")
@@ -352,7 +354,7 @@ class NumberCheck(Check):
         return bool(r.item.translation)
 
     def run(self, r: ItemResult, ctx) -> None:
-        src, tgt = r.item.source, r.item.translation
+        src, tgt = r.item.source, self.translation(r)
         s_nums, t_nums = extract_numbers(src), extract_numbers(tgt)
         word_vals = {
             canonical_number(str(v)) for w, v in ENGLISH_NUMBER_WORDS.items() if re.search(rf"\b{w}\b", src, re.I)
@@ -495,7 +497,7 @@ class EntityCheck(Check):
         return bool(r.item.translation) and r.item.lang != "en"
 
     def run(self, r: ItemResult, ctx) -> None:
-        src, tgt = r.item.source, r.item.translation
+        src, tgt = r.item.source, self.translation(r)
         ents = source_entities(src)
         if not ents:
             raise SkipCheck("no names or terms in source")
@@ -557,7 +559,7 @@ def consistency_signals(results: list[ItemResult]) -> None:
         for r, v in uses:
             nv = normalize_text(v, asr_fold=True)
             if nv != top and fuzz.ratio(nv, top) < 80 and top_n >= 2:
-                pos = r.item.translation.find(v)
+                pos = (r.item.translation or "").find(v)
                 span = (pos, pos + len(v)) if pos >= 0 else None
                 r.signals.append(
                     Signal(

@@ -22,10 +22,11 @@ from __future__ import annotations
 
 import hashlib
 from collections import defaultdict
+from dataclasses import dataclass, field
 
 from .config import CATEGORIES, category_area, category_group
 from .fusion import fuse
-from .models import Flag, ItemResult, Label
+from .models import Flag, ItemResult, Label, Signal
 from .spans import overlaps
 
 
@@ -96,7 +97,7 @@ def _ratio(a: float, b: float) -> float | None:
 def evaluate(results: list[ItemResult]) -> dict:
     """Headline and per-category metrics over labelled items using their current flags."""
     lab_items = [r for r in results if r.item.labels is not None and r.status == "ok"]
-    per_cat = defaultdict(
+    per_cat: defaultdict[str, dict[str, int]] = defaultdict(
         lambda: {
             "labels": 0,
             "detected": 0,
@@ -107,7 +108,9 @@ def evaluate(results: list[ItemResult]) -> dict:
             "category_correct": 0,
         }
     )
-    per_lang = defaultdict(lambda: {"labels": 0, "detected": 0, "clean_items": 0, "clean_flagged": 0})
+    per_lang: defaultdict[str, dict[str, int]] = defaultdict(
+        lambda: {"labels": 0, "detected": 0, "clean_items": 0, "clean_flagged": 0}
+    )
     tot = {
         "labels": 0,
         "detected": 0,
@@ -195,40 +198,49 @@ def evaluate(results: list[ItemResult]) -> dict:
     }
 
 
+@dataclass
+class _CheckStats:
+    """Running counts for one check in ``per_check``."""
+
+    signals: int = 0
+    matched: int = 0
+    labels_hit: defaultdict[str, int] = field(default_factory=lambda: defaultdict(int))
+
+
 def per_check(results: list[ItemResult], min_score: float = 0.3) -> dict:
     """Signal-level precision/recall of each check on its own (before fusion), against labels."""
-    stats = defaultdict(lambda: {"signals": 0, "matched": 0, "labels_hit": defaultdict(int)})
+    stats: defaultdict[str, _CheckStats] = defaultdict(_CheckStats)
     label_counts: dict[str, int] = defaultdict(int)
     for r in results:
         if r.item.labels is None or r.status != "ok":
             continue
         for lab in r.item.labels:
             label_counts[lab.category or "unmapped"] += 1
-        by_check = defaultdict(list)
+        by_check: defaultdict[str, list[Signal]] = defaultdict(list)
         for s in r.signals:
             if s.score >= min_score:
                 by_check[s.check].append(s)
         for check, sigs in by_check.items():
             fake = [Flag(s.category, s.severity, s.score, s.span, s.source_span, None, None, [], [check]) for s in sigs]
             matches, used = match_item(fake, r.item.labels)
-            stats[check]["signals"] += len(fake)
-            stats[check]["matched"] += sum(used)
+            stats[check].signals += len(fake)
+            stats[check].matched += sum(used)
             for m in matches:
                 if m["detected"] and m["rank"] >= 2:
-                    stats[check]["labels_hit"][m["category"] or "unmapped"] += 1
+                    stats[check].labels_hit[m["category"] or "unmapped"] += 1
     out = {}
     for check, v in sorted(stats.items()):
         out[check] = {
-            "signals": v["signals"],
-            "precision": _ratio(v["matched"], v["signals"]),
-            "recall_by_category": {c: _ratio(n, label_counts[c]) for c, n in sorted(v["labels_hit"].items())},
+            "signals": v.signals,
+            "precision": _ratio(v.matched, v.signals),
+            "recall_by_category": {c: _ratio(n, label_counts[c]) for c, n in sorted(v.labels_hit.items())},
         }
     return out
 
 
 def judge_consistency(results: list[ItemResult]) -> dict:
     n = agree_bin = agree_cat = 0
-    per_lang = defaultdict(lambda: [0, 0])
+    per_lang: defaultdict[str, list[int]] = defaultdict(lambda: [0, 0])
     for r in results:
         if "judge_agree_binary" in r.metrics:
             n += 1
@@ -268,7 +280,7 @@ def tune(
     if not lab:
         report["note"] = "no labelled items: default thresholds used"
         return thresholds, report
-    counts = defaultdict(int)
+    counts: defaultdict[str, int] = defaultdict(int)
     for r in lab:
         for label in r.item.labels or []:
             if label.category:

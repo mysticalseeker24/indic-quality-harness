@@ -55,7 +55,7 @@ class JudgeCheck(Check):
         if not ctx.llm.available():
             raise SkipCheck("LLM not configured (LLM_MODEL / LLM_API_KEY)")
         info = lang_info(r.item.lang)
-        s_tok, t_tok = ws_tokens(r.item.source), ws_tokens(r.item.translation)
+        s_tok, t_tok = ws_tokens(r.item.source), ws_tokens(self.translation(r))
         if len(t_tok) > 1500:
             raise SkipCheck("translation too long for the judge prompt")
         findings = self._findings(r, s_tok, t_tok)
@@ -74,7 +74,7 @@ class JudgeCheck(Check):
         ]
         replicas = int(ctx.judge_cfg["replicas"])
         weight = float(ctx.judge_cfg["replica_weight"])
-        verdicts = []
+        verdicts: list[list[str] | None] = []
         invalid = 0
         for k in range(replicas):
             order = orders[k % len(orders)]

@@ -29,6 +29,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 from .. import audio as A
 from .. import markup
@@ -204,7 +205,7 @@ class AsrCheck(Check):
 
     def run(self, r: ItemResult, ctx) -> None:
         info = lang_info(r.item.lang)
-        text = r.item.translation
+        text = self.translation(r)
         x, sr = ctx.load_audio(r.item.audio)
         hyp = self._transcribe(ctx, x, sr, A.chunk_plan(x, sr), info.asr_lang)
         r.state["transcript"] = hyp
@@ -321,7 +322,7 @@ class AsrCheck(Check):
                 cur = None
         if cur:
             gaps.append(cur)
-        out = []
+        out: list[dict[str, Any]] = []
         n_ref = len(ref)
         for i1, i2, j1, j2 in gaps:
             missing = (i2 - i1) - (j2 - j1)
@@ -395,4 +396,6 @@ class AsrCheck(Check):
 
 
 def audio_path_ok(path: str | None) -> bool:
-    return bool(path) and Path(path).is_file()
+    if not path:
+        return False
+    return Path(path).is_file()

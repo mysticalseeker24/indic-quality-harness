@@ -54,10 +54,16 @@ class Check:
         raise NotImplementedError
 
     # helpers -------------------------------------------------------------
-    def signal(self, r: ItemResult, category: str, score: float, evidence: str, **kw) -> Signal:
+    def signal(self, r: ItemResult, category: str, score: float, evidence: str, **kw: Any) -> Signal:
         s = Signal(check=self.name, category=category, score=max(0.0, min(1.0, score)), evidence=evidence, **kw)
         r.signals.append(s)
         return s
 
-    def param(self, ctx: RunContext, key: str):
+    def param(self, ctx: RunContext, key: str) -> Any:
         return ctx.params[key]
+
+    def translation(self, r: ItemResult) -> str:
+        """The item's translation as ``str``. ``applies`` already requires one; this makes it explicit (and typed)."""
+        if r.item.translation is None:
+            raise SkipCheck("no translation to check")
+        return r.item.translation

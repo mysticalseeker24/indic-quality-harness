@@ -88,7 +88,7 @@ class ScriptCheck(Check):
         info = lang_info(r.item.lang)
         if not info.script:
             raise SkipCheck(f"no script data for '{r.item.lang}' (add it to data/langs.json)")
-        tgt, src = r.item.translation, r.item.source
+        tgt, src = self.translation(r), r.item.source
         src_words = source_latin_words(src)
         allowed = _allowed_latin_spans(tgt, src_words)
         counts = letter_scripts(tgt, allowed)
@@ -220,7 +220,7 @@ class FormatCheck(Check):
         )
 
     def run(self, r: ItemResult, ctx) -> None:
-        src, tgt = r.item.source, r.item.translation
+        src, tgt = r.item.source, self.translation(r)
         self._lines(r, src, tgt)
         self._math(r, src, tgt)
         self._inline(r, src, tgt)
@@ -382,7 +382,7 @@ class LengthCheck(Check):
         return bool(r.item.translation)
 
     def run(self, r: ItemResult, ctx) -> None:
-        lr = length_log_ratio(r.item.source, r.item.translation)
+        lr = length_log_ratio(r.item.source, self.translation(r))
         if lr is None:
             raise SkipCheck("source too short for a length ratio")
         med, sd, n = ctx.stats.length_ratio.get(r.item.lang, (math.log(langs()["priors"]["length_ratio"]), 0.35, 0))
@@ -421,7 +421,9 @@ class ReferenceCheck(Check):
     def run(self, r: ItemResult, ctx) -> None:
         from sacrebleu.metrics import BLEU, CHRF
 
-        hyp = normalize_text(r.item.translation, casefold=False)
+        if r.item.reference is None:
+            raise SkipCheck("no reference translation")
+        hyp = normalize_text(self.translation(r), casefold=False)
         ref = normalize_text(r.item.reference, casefold=False)
         r.metrics["chrf_pp"] = round(CHRF(word_order=2).sentence_score(hyp, [ref]).score, 2)
         r.metrics["bleu"] = round(BLEU(effective_order=True).sentence_score(hyp, [ref]).score, 2)

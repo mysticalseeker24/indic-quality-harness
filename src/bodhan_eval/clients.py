@@ -336,6 +336,8 @@ class LLMClient:
         return parse_json_object(text)
 
     def _call(self, messages: list[dict], params: dict) -> tuple[str, tuple[int, int]]:
+        if self._client is None:
+            raise ServiceUnavailable("LLM not configured (LLM_MODEL / LLM_API_KEY)")
         kwargs: dict = {
             "model": self.model,
             "messages": messages,
