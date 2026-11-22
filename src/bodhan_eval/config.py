@@ -93,6 +93,24 @@ def lang_info(code: str) -> LangInfo:
     )
 
 
+def normalize_lang_code(code: str) -> str:
+    """Map a user-supplied language code to the registry's spelling.
+
+    ``HI``, ``hi-IN`` and ``hi_in`` become ``hi``; script variants keep their script
+    (``KS-DEVA`` -> ``ks-Deva``, ``sd-Arab-PK`` -> ``sd-Arab``) because the script changes
+    which checks apply. The longest known prefix of the subtags wins. Unknown codes are
+    returned stripped but otherwise unchanged, so the run still reports on them.
+    """
+    raw = code.strip()
+    known = {k.lower(): k for k in langs()["languages"]}
+    parts = raw.replace("_", "-").lower().split("-")
+    for n in range(len(parts), 0, -1):
+        hit = known.get("-".join(parts[:n]))
+        if hit:
+            return hit
+    return raw
+
+
 def same_script_languages(code: str) -> list[str]:
     info = lang_info(code)
     if not info.script:
