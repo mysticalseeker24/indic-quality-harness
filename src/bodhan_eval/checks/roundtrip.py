@@ -26,9 +26,11 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from dataclasses import dataclass
 
 from rapidfuzz import fuzz
 
+from ..config import lang_info
 from ..models import ItemResult, Signal
 from ..normalize import (
     ENGLISH_NUMBER_WORDS,
@@ -180,6 +182,16 @@ def units_in(words: list[str]) -> dict[str, set[str]]:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class BtLimits:
+    """Thresholds for one back-translation run, passed down as a value (never stored on the shared check)."""
+
+    clause_min_words: int
+    max_coverage: float
+    extra_min_words: int
+    extra_min_share: float
+
+
 class BackTranslationCheck(Check):
     name = "back_translation"
     tier = 1
@@ -211,10 +223,13 @@ class BackTranslationCheck(Check):
         all_bt = set(bt_words)
         r.metrics["bt_coverage"] = round(coverage([w for ws in src_words for w in ws], all_bt), 4)
 
-        min_words = self.param(ctx, "bt_clause_min_content_words")
-        max_cov = self.param(ctx, "bt_clause_max_coverage")
-        self.extra_min = self.param(ctx, "bt_extra_min_content_words")
-        self.extra_share = self.param(ctx, "bt_extra_min_share")
+        lim = BtLimits(
+            clause_min_words=self.param(ctx, "bt_clause_min_content_words"),
+            max_coverage=self.param(ctx, "bt_clause_max_coverage"),
+            extra_min_words=self.param(ctx, "bt_extra_min_content_words"),
+            extra_min_share=self.param(ctx, "bt_extra_min_share"),
+        )
+        min_words, max_cov = lim.clause_min_words, lim.max_coverage
         groups = align(src_words, tgt_words)
         sims = []
         for si, ti in groups:
@@ -257,7 +272,7 @@ class BackTranslationCheck(Check):
                 sims.append(pair_sim)
                 tspan = (segs[ti[0]][0], segs[ti[-1]][1])
                 sspan = (src_sents[si[0]][0], src_sents[si[-1]][1])
-                self._partial(r, src, s_ws, t_ws, sspan, tspan, all_bt, all_src, bt, ti, min_words, max_cov, pair_sim)
+                self._partial(r, src, s_ws, t_ws, sspan, tspan, all_bt, all_src, bt, ti, lim, pair_sim)
         if sims:
             r.metrics["bt_min_sentence_sim"] = round(min(sims), 4)
 
@@ -272,7 +287,8 @@ class BackTranslationCheck(Check):
                 return segs[g[1][0]][0]
         return n
 
-    def _partial(self, r, src, s_ws, t_ws, sspan, tspan, all_bt, all_src, bt, ti, min_words, max_cov, pair_sim):
+    def _partial(self, r, src, s_ws, t_ws, sspan, tspan, all_bt, all_src, bt, ti, lim: BtLimits, pair_sim):
+        min_words, max_cov = lim.clause_min_words, lim.max_coverage
         local_bt = set(t_ws)
         for a, b in clauses(src[sspan[0] : sspan[1]], sspan[0], min_words):
             words = [w for w, _, _ in content_words(src[a:b])]
@@ -292,7 +308,7 @@ class BackTranslationCheck(Check):
                     details={"coverage": round(cov_local, 3)},
                 )
         extra = [w for w in t_ws if not _fuzzy_in(w, set(s_ws)) and not _fuzzy_in(w, all_src)]
-        if len(extra) >= self.extra_min and len(extra) / max(1, len(t_ws)) >= self.extra_share:
+        if len(extra) >= lim.extra_min_words and len(extra) / max(1, len(t_ws)) >= lim.extra_min_share:
             self.signal(
                 r,
                 "addition",
@@ -488,6 +504,18 @@ def source_entities(source: str, limit: int = 8) -> list[tuple[str, int, int]]:
     return out[:limit]
 
 
+def transliterable(lang: str) -> bool:
+    """Indic-Transliterate only makes sense for a known language written in a non-Latin script."""
+    info = lang_info(lang)
+    return info.known and info.script not in (None, "LATIN")
+
+
+def terms_to_transliterate(source: str, translation: str) -> list[str]:
+    """Source terms not already present in Latin script in the translation (they need an Indic rendering)."""
+    low = translation.lower()
+    return [w for w, _, _ in source_entities(source) if w.lower() not in low]
+
+
 class EntityCheck(Check):
     name = "entities"
     tier = 1
@@ -507,18 +535,23 @@ class EntityCheck(Check):
         bt_text = r.state.get("bt_text", "")
         bt_tokens = [t.text.lower() for t in word_tokens(bt_text)]
         renderings = r.state.setdefault("entity_renderings", {})
-        translit_ok = ctx.bodhan.available("translate")
+        translit_ok = ctx.bodhan.available("translate") and transliterable(r.item.lang)
+        direct_calls, cap = 0, int(self.param(ctx, "entity_max_transliterations"))
         for word, a, b in ents:
             if word.lower() in tgt.lower():
                 renderings[word] = word
                 continue
             best = (0.0, -1, -1)
-            if translit_ok:
+            native = ctx.transliterations.get((r.item.lang, word))  # prefetched once per dataset (K6)
+            if native is None and translit_ok and direct_calls < cap:
+                direct_calls += 1
                 try:
-                    native = normalize_text(ctx.bodhan.transliterate(word, r.item.lang), asr_fold=True)
+                    native = ctx.bodhan.transliterate(word, r.item.lang)
                 except Exception as e:  # transliteration is an aid; fall back to the back-translation
                     native, translit_ok = "", False
-                    r.checks.setdefault(self.name, {}).setdefault("notes", []).append(f"transliterate failed: {e}")
+                    r.metrics["entity_transliteration_error"] = f"{type(e).__name__}: {e}"
+            if native:
+                native = normalize_text(native, asr_fold=True)
                 if native:
                     best = best_window_match(native, tgt_tokens)
                     if best[0] >= thr:

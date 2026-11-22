@@ -37,6 +37,7 @@ from .cache import Cache
 from .calibrate import cross_validated, evaluate, judge_consistency, per_check, tune
 from .checks import DATASET_CHECKS, SPEECH_CHECKS, TRANSLATION_CHECKS, Check, DatasetStats, SkipCheck
 from .checks.deterministic import length_log_ratio
+from .checks.roundtrip import terms_to_transliterate, transliterable
 from .checks.speech import spoken_chars
 from .clients import BodhanClient, BodhanError, LLMClient, ServiceUnavailable
 from .config import CATEGORIES, Settings, defaults
@@ -105,6 +106,7 @@ class RunContext:
     cache: Cache
     events: EventLog
     stats: DatasetStats = field(default_factory=DatasetStats)
+    transliterations: dict[tuple[str, str], str] = field(default_factory=dict)  # (lang, term) -> rendering
 
     def load_audio(self, path: str) -> tuple[np.ndarray, int]:
         return A.load_audio(path)
@@ -156,6 +158,7 @@ def execute(items: list[Item], rep: LoadReport, ctx: RunContext, opts: RunOption
     """Everything between loading and writing; separate from ``run`` so a library caller can reuse it."""
     generation = _generate(items, ctx, opts) if opts.generate else {}
     ctx.stats = prepass_stats(items, ctx)
+    prefetch_transliterations(items, ctx, opts.concurrency)
     results = [ItemResult(item=it) for it in items]
     checks: list[Check] = [cls() for cls in TRANSLATION_CHECKS]
     if opts.speech:
@@ -301,6 +304,36 @@ def prepass_stats(items: list[Item], ctx: RunContext) -> DatasetStats:
         if len(vals) >= p["rate_min_items_per_lang"]:
             stats.chars_per_second[lang] = (statistics.median(vals), len(vals))
     return stats
+
+
+def prefetch_transliterations(items: list[Item], ctx: RunContext, concurrency: int) -> None:
+    """Transliterate each unique (language, source term) once, before the per-item checks (K6).
+
+    Items that share a name would otherwise race to pay for the same call before the cache has it.
+    A failed call is stored as "" so the entity check falls back to the back-translation without retrying.
+    """
+    if not ctx.bodhan.available("translate"):
+        return
+    wanted = sorted(
+        {
+            (it.lang, term)
+            for it in items
+            if it.translation and transliterable(it.lang)
+            for term in terms_to_transliterate(it.source, it.translation)
+        }
+    )
+
+    def fetch(key: tuple[str, str]) -> tuple[tuple[str, str], str]:
+        lang, term = key
+        try:
+            return key, ctx.bodhan.transliterate(term, lang)
+        except (ServiceUnavailable, BudgetExceeded, BodhanError) as e:
+            log.info("transliteration of %r (%s) unavailable: %s", term, lang, e)
+            return key, ""
+
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+        for key, value in pool.map(fetch, wanted):
+            ctx.transliterations[key] = value
 
 
 def _speaking_rate(it: Item, ctx: RunContext) -> float | None:
