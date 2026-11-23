@@ -32,8 +32,8 @@ Legend: ✅ draft written and smoke-tested · 🟡 draft with known issues (see 
 | `splits.py` | ✅ | P5 — unlabelled demo set, calibration subset (40, half clean, every category) and bake-off set (50 incl. 10 te, text only) from the labelled gold (DATASET_PLAN step 5) |
 | `review.py` | ✅ | P5 (pulled forward from P6) — review sheet export (flagged, review queue, seeded sample of the rest; back-translation from cache) and import of the answers as `annotator: saksham` labels for `--calibration`; P6 adds the review-queue view |
 | `bakeoff.py` | ✅ | P3 — judge model comparison; estimate + `--max-usd` refusal and stop; mini run done, full run after P5 (D33) |
-| `api.py` | ⬜ | P6 — library entry points for reuse in other projects |
-| extras: `mqm.py`, `review.py`, `dashboard.py`, `voices.py`, CI mode | ⬜ | P6 |
+| `api.py` | ✅ | P6 — `Harness.check_translation / check_speech / evaluate`, no CLI imports |
+| extras: `mqm.py`, `dashboard.py`, `voices.py`, CI mode, `api.py` | ✅ | P6 — MQM per language, checks-that-could-not-run table, `--fail-on-regression` (exit 3), static dashboard, voice comparison, library API |
 
 ## Known issues in the drafts (fix in the phase noted)
 

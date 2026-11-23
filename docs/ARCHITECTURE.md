@@ -123,6 +123,14 @@ Labels (inline or `--calibration`) are matched to flags by span overlap and cate
 - **Splits** (`python -m bodhan_eval.splits --gold <labelled demo> [--heldout-gold ...] [--extra-labels <review>] --out-dir data`): from the labelled demo it writes the unlabelled `demo.jsonl` the harness runs on, a 40-item calibration subset (half clean; error items round-robin over categories, each pick from the language least represented so far) and the judge bake-off set (text categories only, plus 10 items of a held-out language and every human-reviewed item). Seeded; input files are never rewritten.
 - **Scorecard** (`python -m bodhan_eval.score --report <run> --gold <labels> [--labels <review>] [--exclude <calibration subset>]`): scores a finished blind run the way a hidden test would — recall (labels and items), false-alarm rate on clean items, precision, localisation, category accuracy, per category, language, severity and label source (injector method or annotator), plus how many missed labels the review queue holds. Matching is `calibrate.match_item`, so the numbers agree with `calibration.json`.
 
+### Reports and extras
+
+- **summary.md / summary.json**: per language (items, flagged, uncertain, MQM-style score: 100 minus severity penalties per source word, minor 1 / major 5 / critical 10), per category with severities, the 10 worst failures with evidence, a table of **checks that could not run** (ran / skipped or not applicable / failed, with reasons: zero flags on an unchecked item must not read as clean), calibration, cost, data problems.
+- **diff.md** (`--baseline`): flags matched by category group and span overlap; regressions and improvements by severity. `--fail-on-regression` turns it into a CI gate (exit 3 above `--max-new-major`).
+- **dashboard.html**: one static page per report; filters by language, category, severity and check; spans highlighted in source and translation; data inserted with `textContent` only.
+- **Library** (`bodhan_eval.api.Harness`): `check_translation`, `check_speech`, `evaluate`; a run context per call, so it is thread-safe; independent of the CLI.
+- **Voice comparison** (`python -m bodhan_eval.voices`): the same texts spoken by each voice, speech checks per clip, paired counts.
+
 ## 7. Engineering
 
 - **Cache**: SQLite, key = SHA-256 of `{kind, model, params, exact input}` (audio by content hash); stores the price of each output, so a rerun reports the same "cost of outputs used" while spending ₹0.

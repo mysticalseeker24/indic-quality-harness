@@ -29,6 +29,7 @@ Estimate (the tool's own estimator on 50 proxy paragraphs of ~55 words; 2 replic
 | `deepseek/deepseek-v4.1-flash` | 100 % / 100 % | 100 % | 100 % (n=2) | 0 % | 2567 | 0.017 | 100 % / 0 % | json_schema |
 
   Spend: Luna $0 (all answers cached from the smoke run, which cost $0.0014 as reported by OpenRouter), DeepSeek $0.0025 reported ($0.0009 at list price).
+- **Full run (23 Nov, after P5):** 8 models, 50 items of `data/bakeoff.jsonl` (25 clean, 10 Telugu), reasoning effort low, $5.76 reported (cap $8). Results in README; harness recall / false alarms: Kimi K3.1 Pro 96 / 4 %, Luna 96 / 8 %, Gemini 4 Hydrogen 93 / 0 %, Gemini 4 Neon 100 / 12 %, DeepSeek V4.1 Flash 96 / 12 % (15 % invalid), Sonnet 5.5 93 / 20 %, GPT-6.2 Sol 100 / 28 %, Llama 3.1 8B 85 / 92 %. **Default: `moonshotai/kimi-k3.1-pro`** (chosen by Saksham): Luna wins the per-dollar rule, but Kimi has half the false alarms and 94 % order consistency vs 72 %, despite labels that favour Luna (the real-error labels came from Luna's flags).
 - **Full run: after P5**, when the injector and Saksham's labels give the labelled set below (DATASET_PLAN step 5). Show the estimate on the real set again before running.
 
 ## Budget arithmetic
