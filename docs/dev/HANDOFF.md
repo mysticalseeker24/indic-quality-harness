@@ -19,7 +19,7 @@ Every Claude Code session reads this first and rewrites "Current state" at each 
 - **Paid usage so far:** Bodhan ≈ ₹0.012 of ₹200 · OpenRouter ≈ $0.0039 reported (smoke $0.0014, mini bake-off $0.0025).
 - **Environment (Windows 11):** `.venv` on Python 3.13.9 (CI runs 3.10 and 3.12); GNU make from winget. In PowerShell put `.venv\Scripts` and `%LOCALAPPDATA%\Microsoft\WinGet\Links` on PATH before `make`. PowerShell 5.1 drops empty-string arguments to native commands: use bash for those. In this Bash tool, heredocs with nested quotes break: write scripts to the scratchpad and run them. Never read `.env` into the chat; edit it with `dotenv.set_key` and print names only.
 - **Git:** `main`, plain conventional commits (D23), pushed at every checkpoint and at >= 5 unpushed commits (standing yes for normal pushes).
-- **Exam project:** in progress in parallel (Saksham, 23 Nov). Never touch it (CLAUDE.md §4.8).
+- **Exam project:** **done and sealed** (Saksham, 23 Nov: it offers to send files and a handover). Nothing from it comes into this repo or chat before Phase 7 — no files, no handover notes, no counts or error mix. At Phase 7 Saksham gives the exact file paths; run once, report as is (CLAUDE.md §3, §4.8).
 - **Repo visibility:** private (make public before export — CLAUDE.md §3).
 
 ## Open problems
