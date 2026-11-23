@@ -18,7 +18,7 @@ Legend: ✅ draft written and smoke-tested · 🟡 draft with known issues (see 
 | `checks/deterministic.py` | ✅ | script/language, format, length, reference; tables pass (P2) |
 | `checks/roundtrip.py` | ✅ | back-translation + DP alignment, numbers, entities, term consistency; K3, K6 fixed and tables pass (P2) |
 | `checks/judge.py` | ✅ | token-index judge, strict schema; adaptive replicas, jury, repeat-consistency, long-text windows (K2, D36) |
-| `checks/speech.py`, `audio.py` | 🟡 | waveform stats, chunked ASR, alignment, second opinion (K5) |
+| `checks/speech.py`, `audio.py` | ✅ | waveform stats, ASR in ~10 s chunks at pauses (29 s where needed), alignment, second opinion on long chunks; time map with ASR anchors (K5, D37); check tables pass (P4) |
 | `fusion.py` | ✅ | clustering + noisy-OR + thresholds; K8 fixed (P2) |
 | `calibrate.py` | ✅ | matching, metrics, per-category tuning, 2-fold CV |
 | `dataset.py` | ✅ | loader + one-pass calibration file; K4, K10 fixed in P1 |
@@ -39,7 +39,7 @@ Legend: ✅ draft written and smoke-tested · 🟡 draft with known issues (see 
 - ✅ fixed in P3 — **K2 (P3) `checks/judge.py`**: (a) adaptive replicas — run 2; if their category sets disagree, run a 3rd and take the majority (`--judge-max-replicas`, default 3); (b) `--judge-models a,b,c` jury using the same base URL/key, falling back to `LLM_MODEL`; (c) repeat-consistency: on a deterministic sample (`--judge-repeat-sample 0.1`), re-send the *identical* prompt with a cache-bypass marker in the cache key only (not in the prompt) and report agreement separately from order-consistency; (d) translations over ~1,200 tokens: judge in overlapping windows of segments and offset token indices back.
 - ✅ fixed in P2 — **K3 (P2) `BackTranslationCheck`** stores `extra_min/extra_share` on the shared check instance; pass them as locals to `_partial`.
 - ✅ fixed in P1 — **K4 (P1) `dataset.apply_calibration_file`** reads the file twice; restructure into one pass and unit-test the three line shapes (full item, id+lang+labels, id+labels).
-- **K5 (P4) speech localisation**: time→char mapping is proportional. Improve with chunk anchors: each ASR chunk has a known time range; align chunk transcripts separately so word positions inherit chunk times.
+- ✅ fixed in P4 — **K5 (P4) speech localisation**: time→char mapping is proportional. Improve with chunk anchors: each ASR chunk has a known time range; align chunk transcripts separately so word positions inherit chunk times.
 - ✅ fixed in P2 — **K6 (P2) entities**: cap transliteration calls per item; batch unique entities across the dataset first (dedupe) to save calls.
 - ✅ fixed in P2 — **K8 (P2) fusion**: an unlocated signal (no span, no source span) of category C should join the strongest existing cluster of C instead of producing a separate flag.
 - ✅ fixed in P1 — **K10 (P1) language codes**: normalise `hi-IN`/`HI` → `hi` (warn once); keep script variants (`ks-Deva`, `mni-Beng`, `sd-Arab`).

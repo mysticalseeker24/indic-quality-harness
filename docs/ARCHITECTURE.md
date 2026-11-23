@@ -63,7 +63,7 @@ flowchart TD
   I -- no --> K
   I -- yes --> J
   I1 --> J[Waveform stats: silence, clipping, noise, duration vs rate]
-  J --> J1[Indic-Transcribe ≤30 s chunks cut at pauses → word alignment]
+  J --> J1[Indic-Transcribe ~10 s chunks cut at pauses, ≤29 s → word alignment]
   J1 --> J2{omission/repetition candidate?}
   J2 -- yes --> J3[Second-opinion transcription with different chunking]
   J2 -- no --> K
@@ -86,7 +86,7 @@ Cost ladder: tier 0 is free; back-translation and transliteration cost fractions
 | `entities` | 1 | wrong/garbled names and terms; inconsistency across items | source entities → Latin match, or Indic-Transliterate rendering found by sliding-window similarity, or confirmed by back-translation | all three paths must fail |
 | `judge` | 2 | mistranslation and everything above | LLM with written rubric (`data/judge_rubric.md`), numbered tokens in, token indices out, strict JSON schema | one replica alone stays below threshold; replicas use re-ordered prompts and cannot see each other; spans validated |
 | `audio_stats` | 0 | garbled audio, duration anomalies | 20 ms frames: level relative to the clip's speech level, spectral flatness, clipping runs; speaking rate vs language median | thresholds relative to each clip; duration only corroborates |
-| `asr` | 1 | speech omission/truncation, repetition, garbled | ≤30 s chunks at pauses → Indic-Transcribe → word-level Levenshtein alignment → contiguous gaps and repeated n-grams | contiguous runs only; duration must agree; second-opinion transcription with different chunk boundaries dismisses ASR misses |
+| `asr` | 1 | speech omission/truncation, repetition, garbled | chunks cut at pauses near every 10 s (up to 29 s to keep a sentence whole) → Indic-Transcribe → word-level Levenshtein alignment → contiguous gaps and repeated n-grams; chunk boundaries become time anchors for every speech finding | contiguous runs only; duration must agree; second-opinion transcription on long chunks cut away from the first cuts dismisses ASR misses |
 
 ## 4. The judge
 
@@ -98,6 +98,10 @@ Cost ladder: tier 0 is free; back-translation and transliteration cost fractions
 - **Long texts.** Over 1,200 whitespace tokens, the translation is judged in windows of whole sentences that share one sentence with their neighbours; the source window is the proportional range plus 15 % on each side, widened to whole sentences, and the prompt says so. Token indices are mapped back to the full text. Items needing more than 8 windows are skipped (cost guard).
 - **Bias control.** LLM judges over-report MISTRANSLATION/MAJOR and struggle to say "no error"; one judge replica alone never reaches a flag (only the review queue), two agreeing replicas do, and calibration tunes the per-category thresholds from labels.
 - **Choosing the model.** `python -m bodhan_eval.bakeoff --dataset labelled.jsonl --models a,b --out outputs/bakeoff --max-usd 5` runs tiers 0–1 once, then only the judge per model, and reports judge-alone precision/recall per category, both consistency rates, invalid-output rate, tokens and $ per item, and harness recall / false alarms with that judge (default thresholds, so models compare on equal terms). It prints a cost estimate and refuses to start above `--max-usd`, stops taking items once real spend reaches it, and reruns from cache for free.
+
+### Where in the text a speech finding is (K5)
+
+Indic-Transcribe returns text, not word timings, so time positions come from two things. (1) Speaking time: between two known points, position follows only the frames with sound, so a pause or an inserted silence does not drag later positions forward. (2) Anchors: every ASR chunk has a known time range, and the word alignment tells which text words its transcript covers, so each chunk maps its time range to exactly those characters, whatever the speaking rate elsewhere. That is why the primary transcription is cut near every 10 s (same per-second price, more anchors), while a chunk may stretch to 29 s rather than cut a sentence. `audio_stats` runs first and places silences, noise and clipping with one proportional anchor; once the transcript exists, `asr` re-places those findings with its anchors (`details.located_by`).
 
 ## 5. From signals to flags
 

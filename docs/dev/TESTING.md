@@ -29,6 +29,8 @@ Layout: `tests/unit/test_<module>.py`, `tests/e2e/`, `tests/fixtures/` (small JS
 
 Each row is a separate parametrised test case with a readable id.
 
+Speech rows (`tests/unit/test_check_tables_speech.py`, `tests/unit/test_speech_time.py`) use tone-words: each vocabulary word is a tone and the stub's transcription decodes the tones it receives (`testing.stub_server.tone_speech`, fixture `transcribe: {lang: {tone_words: [...], errors: [...]}}`). Tests therefore choose exactly what is spoken, at what speed and where the pauses are, while chunking, alignment and the second opinion run for real; `errors` makes the ASR drop or repeat the last words of requests of a given length, which is how chunk-dependent ASR misses are simulated.
+
 ## 3. Fusion and calibration
 
 - One judge replica alone → `uncertain`; two agreeing replicas → flag; deterministic proof alone → flag; judge + back-translation → flag.
