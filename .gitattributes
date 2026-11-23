@@ -4,3 +4,4 @@
 .github export-ignore
 CLAUDE.md export-ignore
 docs/dev export-ignore
+docs/SPEC.md export-ignore
