@@ -64,14 +64,17 @@ Library: `from bodhan_eval.api import Harness; Harness(max_cost_inr=5).check_tra
 
 **Demo set:** 180 items (60 NCERT-style passages from Wikipedia × hi/ta/bn, a quarter with Markdown, tables or LaTeX; sources and licences in `data/SOURCES.md`), translated and spoken by Bodhan with `--generate`, then 75 errors planted by the injector. Scored out of sample: the 40 calibration items are excluded.
 
-| Measure (125 scored items) | Value |
+| Measure (125 scored items, judge Kimi K3.1 Pro) | Value |
 |---|---|
 | Planted errors caught | **60 / 61 (98 %)** |
-| All labelled errors caught (incl. real Bodhan errors) | 92 % (items: 94 %) |
+| All labelled errors caught (incl. real Bodhan errors) | 87 % (items: 90 %) |
 | False alarms on clean items | 0 / 24 |
 | Precision of flags | 88 % |
-| Localisation (flag overlaps the error) / category correct | 92 % / 98 % |
-| Cross-validated on the calibration subset (2-fold) | item recall 90 %, false alarms 0 % |
+| Localisation (flag overlaps the error) / category correct | 84 % / 96 % |
+| Cross-validated on the calibration subset (2-fold) | item recall 85 %, false alarms 0 % |
+| MQM-style score per language | hi 93.9, bn 93.9, ta 91.2 |
+
+With GPT-6 Luna as the judge the same run catches 92 % of all labels (localisation 92 %); the real-error labels come from a review of Luna-judged flags, which favours Luna.
 
 **Bodhan's own errors.** The un-injected outputs were not clean. Every one of the 124 flags the harness raised on the 180 generated outputs was reviewed against its evidence (`data/clean_run_review.jsonl`): 101 real, 10 debatable, 13 false alarms (fixed since: D46-D48, after which the speech fixes found 10 more real errors and no new false alarms). Highlights a model team can act on:
 
