@@ -35,7 +35,11 @@ NUMBER_CATCH = [
     pytest.param("Add 2 spoons of sugar and 3 cups of milk.", "चीनी के चम्मच और 3 कप दूध डालें।", None, id="number-dropped"),
     pytest.param("Add sugar to the milk.", "दूध में 2 चम्मच चीनी डालें।", "2", id="number-added"),
     pytest.param("The city has 1,00,000 people.", "शहर में 10,000 लोग हैं।", "10,000", id="indian-grouping-changed"),
-]
+    pytest.param("It is accurate to 2 significant figures: 9.8 m/s².", "இது 9.8 மீ/வி² ஆகும்.", None,
+                 id="number-dropped-while-the-exponent-stays"),  # seen live (ta): the ² must not stand in for the 2
+    pytest.param("Vitamin B12 is found in milk.", "विटामिन बी 13 दूध में पाया जाता है।", "13",
+                 id="glued-number-changed-when-written-apart"),
+]  # fmt: skip
 
 NUMBER_CLEAN = [
     pytest.param("There are 25 students in the class.", "कक्षा में २५ छात्र हैं।", id="devanagari-digits"),
@@ -46,7 +50,15 @@ NUMBER_CLEAN = [
     pytest.param("Water boils at 100 °C.", "জল ১০০ °C তাপমাত্রায় ফোটে।", id="bengali-digits"),
     pytest.param("It costs 3.50 rupees.", "इसकी कीमत 3.5 रुपये है।", id="trailing-zero-decimal"),
     pytest.param("The year 2024 had 366 days.", "वर्ष 2024 में 366 दिन थे।", id="several-numbers-kept"),
-]
+    pytest.param("Gravity is 9.8 m/s² to 2 significant figures.", "মাধ্যাকর্ষণ ২ টি সংখ্যা পর্যন্ত ৯.৮ মি/সেকেন্ড২।",
+                 id="exponent-written-as-a-glued-digit"),  # seen live (bn)
+    pytest.param("| B1 | beriberi |\n| B12 | anemia |", "| பி1 | பெரிபெரி |\n| பி12 | இரத்த சோகை |",
+                 id="digits-glued-to-indic-letters"),  # seen live (ta, bn)
+    pytest.param("| B1 | beriberi |\n| B12 | anemia |", "| बी 1 | बेरीबेरी |\n| बी 12 | एनीमिया |",
+                 id="glued-in-source-apart-in-translation"),  # seen live (hi)
+    pytest.param("Plants absorb CO₂ and release O₂.", "पौधे CO2 अवशोषित करते हैं और O2 छोड़ते हैं।",
+                 id="subscript-digits"),
+]  # fmt: skip
 
 
 @pytest.mark.parametrize(("source", "translation", "flagged_text"), NUMBER_CATCH)

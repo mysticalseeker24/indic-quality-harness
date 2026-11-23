@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from bodhan_eval.checks.roundtrip import BackTranslationCheck, EntityCheck
+from bodhan_eval.checks.roundtrip import BackTranslationCheck, EntityCheck, source_entities
 
 REVIEW = 0.3  # lowest score that reaches the review queue under the default thresholds
 
@@ -112,6 +112,36 @@ ENTITY_CLEAN = [
     pytest.param("Our solar system is part of the Milky Way.", "हमारा सौर मंडल आकाशगंगा का हिस्सा है।",
                  {"Milky Way": "मिल्की वे"}, "Our solar system is part of the Milky Way.", id="translated-by-meaning-confirmed-by-bt"),
 ]  # fmt: skip
+
+
+ENTITY_EXTRACTION = [  # (source, names that must be found, words that must not be taken for names)
+    pytest.param("Near Earth's surface, gravity is 9.8 m/s². Earth is round.", {"Earth"}, {"Near Earth", "Near"},
+                 id="sentence-initial-preposition-is-not-part-of-the-name"),
+    pytest.param("The Green Revolution began in Punjab.", {"Green Revolution", "Punjab"}, {"The Green Revolution"},
+                 id="sentence-initial-article-is-not-part-of-the-name"),
+    pytest.param("During Mughal rule, Agra grew.", {"Mughal", "Agra"}, {"During Mughal"},
+                 id="sentence-initial-during"),
+    pytest.param("Albert Einstein proposed relativity in Berlin.", {"Albert Einstein", "Berlin"}, {"Einstein"},
+                 id="a-full-name-at-the-start-stays-whole"),
+    pytest.param("| River unit | Draining into | Catchment area |\n|---|---|---|\n| Ganga | Bay of Bengal | 26.3 |",
+                 {"Bengal"}, {"River", "Draining", "Catchment"}, id="table-cells-start-like-sentences"),
+    pytest.param("Consumers have the right to:\n\n- Seek redress against unfair trade.\n- Seek consumer education.",
+                 set(), {"Seek"}, id="a-word-capitalised-only-at-line-starts-is-not-a-name"),
+    pytest.param("Consumers have the right to:\n\n- Be protected against hazards.\n- Be informed of prices.",
+                 set(), {"Be"}, id="function-word-at-line-starts"),
+    pytest.param("Sectors:\n- **Tertiary**: services.\n- **Primary**: raw materials.", set(), {"Tertiary", "Primary"},
+                 id="bold-list-item-starts-like-a-sentence"),
+    pytest.param("Water from the Ganga reaches Kolkata. Ganga is sacred.", {"Ganga", "Kolkata"}, set(),
+                 id="a-name-also-capitalised-mid-sentence-stays"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("source", "names", "not_names"), ENTITY_EXTRACTION)
+def test_entity_extraction(source: str, names: set[str], not_names: set[str]) -> None:
+    found = [w for w, _, _ in source_entities(source)]
+    assert names <= set(found) and not (not_names & set(found)), found
+    for w, a, b in source_entities(source):
+        assert source[a:b] == w  # offsets still point at the (trimmed) name
 
 
 def entity_ctx(start_stub, make_ctx, translation: str, translit: dict, bt: str):

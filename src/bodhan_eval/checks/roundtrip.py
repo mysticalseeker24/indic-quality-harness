@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 
@@ -348,17 +349,34 @@ class BackTranslationCheck(Check):
 # numbers
 # ---------------------------------------------------------------------------
 
-NUM_RE = re.compile(r"(?<![A-Za-z\d.,])\d+(?:[.,]\d+)*")
+NUM_RE = re.compile(r"(?<![\d.,])\d+(?:[.,]\d+)*")
+SUPER_SUB_RE = re.compile(r"[⁰¹²³⁴-⁹₀-₉]+")
+_SUPER_SUB_DIGITS = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉", "01234567890123456789")
+
+
+def _glued(text: str, start: int) -> bool:
+    """Digits right after a letter or vowel sign of any script: part of a name or formula (B12, H2O, பி12)."""
+    return start > 0 and unicodedata.category(text[start - 1])[0] in "LM"
 
 
 def extract_numbers(text: str) -> list[tuple[str, int, int]]:
-    """Canonical numbers with spans. Works on any Unicode digits; skips digits glued to Latin letters (H2O, CO2)."""
+    """Standalone numbers, canonical, with spans. Any Unicode digits; digits glued to letters are left out."""
     t = ascii_digits(text)
     out = []
     for m in NUM_RE.finditer(t):
+        if _glued(t, m.start()):
+            continue
         raw = m.group(0).rstrip(".,")
         out.append((canonical_number(raw), m.start(), m.start() + len(raw)))
     return out
+
+
+def glued_numbers(text: str) -> Counter[str]:
+    """Numbers written as part of a token: glued to letters (B12, বি১২, H2O) or as super/subscripts (m/s², CO₂)."""
+    t = ascii_digits(text)
+    found = [canonical_number(m.group(0).rstrip(".,")) for m in NUM_RE.finditer(t) if _glued(t, m.start())]
+    found += [canonical_number(m.group(0).translate(_SUPER_SUB_DIGITS)) for m in SUPER_SUB_RE.finditer(t)]
+    return Counter(found)
 
 
 class NumberCheck(Check):
@@ -379,8 +397,15 @@ class NumberCheck(Check):
         if not s_nums and not t_nums:
             return
         s_c, t_c = Counter(v for v, _, _ in s_nums), Counter(v for v, _, _ in t_nums)
-        missing = list((s_c - t_c).elements())
-        extra = list((t_c - s_c).elements())
+        # A number may be standalone on one side and part of a token on the other ("B12" -> "बी 12", "m/s²" ->
+        # "মি/সেকেন্ড২"). Per value: missing only if the source has more of it in total than the translation, and
+        # no more than the source had standalone (a ² kept in the translation does not stand in for a dropped 2).
+        s_g, t_g = glued_numbers(src), glued_numbers(tgt)
+        missing, extra = [], []
+        for v in sorted(set(s_c) | set(t_c)):
+            s_tot, t_tot = s_c[v] + s_g[v], t_c[v] + t_g[v]
+            missing += [v] * min(s_c[v], max(0, s_tot - t_tot))
+            extra += [v] * min(t_c[v], max(0, t_tot - s_tot))
         bt_nums = r.state.get("bt_numbers", set())
         # take specific occurrences: the last unmatched ones in reading order
         miss_occ = self._occurrences(s_nums, missing)
@@ -454,44 +479,46 @@ class NumberCheck(Check):
 # entities and terms
 # ---------------------------------------------------------------------------
 
-_SENT_START = re.compile(r"(?:^|[.!?:]\s+|\n\s*(?:[#>*+-]+\s*|\d+[.)]\s*|\|\s*)?)$")
-_COMMON_CAPS = {
-    "the",
-    "a",
-    "an",
-    "in",
-    "on",
-    "at",
-    "this",
-    "that",
-    "it",
-    "we",
-    "i",
-    "if",
-    "when",
-    "for",
-    "to",
-    "of",
-    "and",
-    "is",
-}
+# Places where a capital letter comes from the position, not the word: the start of the text, after . ! ? :,
+# a line start with a list, heading, quote or numbered-list marker, a table cell, and any of these followed by
+# bold or italic markers ("- **Tertiary**:").
+_SENT_START = re.compile(r"(?:^|[.!?:]\s+|\n\s*(?:[#>*+-]+\s*|\d+[.)]\s*)?|\|\s*)(?:\*{1,2}|_{1,2})?$")
+# English function words: capitalised only by position, never a name on their own or the start of one
+# ("The Green Revolution" -> "Green Revolution", "Near Earth" -> "Earth"). A closed class, not a list of names.
+_COMMON_CAPS = set(
+    """the a an this that these those it its we i you he she they his her our their there here
+    in on at for to of from by with without within into onto upon near during after before under over since
+    between among across about through throughout according unlike like as
+    and or but so if when while although because however also both such other another all some most many each every
+    is are was were be been has have had not no what which who how where why then thus hence therefore""".split()
+)
+
+
+def _at_start(source: str, pos: int) -> bool:
+    return bool(_SENT_START.search(source[:pos]))
 
 
 def source_entities(source: str, limit: int = 8) -> list[tuple[str, int, int]]:
-    """Proper names, acronyms and formula-like tokens from English text."""
+    """Proper names, acronyms and formula-like tokens from English text.
+
+    A capitalised word where a sentence, list item or table cell starts counts only if the same word is also
+    capitalised somewhere else that is not such a start (a column header or "- Seek redress" is not a name).
+    """
     found: list[tuple[str, int, int]] = []
     for m in re.finditer(
         r"\b(?:[A-Z][a-zA-Z]+(?:[ -][A-Z][a-zA-Z]+)*|[A-Z]{2,}[a-z]?s?|[A-Za-z]*\d+[A-Za-z]+[A-Za-z\d]*|[a-z]+[A-Z][A-Za-z]+)\b",
         source,
     ):
-        word = m.group(0)
-        start = m.start()
+        parts, start = m.group(0).split(" "), m.start()
+        while len(parts) > 1 and parts[0].lower() in _COMMON_CAPS:  # "The Green Revolution" -> "Green Revolution"
+            start += len(parts[0]) + 1
+            parts = parts[1:]
+        word = " ".join(parts)
         if word.lower() in _COMMON_CAPS:
             continue
-        at_start = bool(_SENT_START.search(source[:start]))
-        if at_start and " " not in word and not word.isupper() and not any(c.isdigit() for c in word):
-            # sentence-initial capital: only an entity if it is also capitalised elsewhere
-            if not re.search(rf"(?<![.!?]\s)(?<!^)\b{re.escape(word)}\b", source[start + len(word) :]):
+        if " " not in word and not word.isupper() and not any(c.isdigit() for c in word) and _at_start(source, start):
+            elsewhere = (k.start() for k in re.finditer(rf"\b{re.escape(word)}\b", source) if k.start() != start)
+            if all(_at_start(source, k) for k in elsewhere):
                 continue
         if re.fullmatch(r"\d+[a-z]{1,2}", word):  # 3rd, 21st
             continue
