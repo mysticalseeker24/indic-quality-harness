@@ -58,11 +58,25 @@ def test_export_puts_suspected_items_first_then_a_seeded_sample(run_dir, tmp_pat
     for lang in ("hi", "ta"):
         mine = [r for r in rows if r["lang"] == lang]
         assert len(mine) == 4
-        assert [r["id"] for r in mine[:3]] == ["x0", "x1", "x2"]  # flagged, then review queue
+        assert mine[0]["id"] == "x0" and {r["id"] for r in mine[1:3]} == {"x1", "x2"}  # flagged, then queue
     assert rows[0]["harness_flags"].startswith("number (major): '100'")
     assert rows[1]["harness_flags"] == "" and rows[1]["review_queue"].startswith("omission")
     assert rows[0]["suggested"] == "number" and rows[3]["suggested"] == "ok"
     assert all(r["your_verdict"] == "" for r in rows)
+
+
+def test_suspected_items_are_a_seeded_sample_not_the_first_ids(tmp_path: Path) -> None:
+    rows = [{"id": f"s{k:02d}", "lang": "hi", "source": "Water boils.", "translation": T_HI} for k in range(30)]
+    records = [{"id": f"s{k:02d}", "lang": "hi", "status": "ok", "flags": [flag("number", None)], "uncertain": []}
+               for k in range(30)]  # fmt: skip
+    report = tmp_path / "run"
+    report.mkdir()
+    write(report / "items.jsonl", records)
+    picked = export((report, write(tmp_path / "d.jsonl", rows)), tmp_path, "--per-lang", "6")
+    ids = [r["id"] for r in picked]
+    assert len(ids) == 6 and ids != sorted(ids)[:6] and ids != [f"s{k:02d}" for k in range(6)]
+    again = export((report, tmp_path / "d.jsonl"), tmp_path, "--per-lang", "6", "--seed", "8")
+    assert [r["id"] for r in again] != ids  # another seed, another sample
 
 
 def test_export_is_deterministic_and_excel_friendly(run_dir, tmp_path: Path) -> None:

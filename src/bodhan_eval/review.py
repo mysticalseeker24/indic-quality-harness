@@ -80,14 +80,18 @@ def _rank(seed: int, key: str) -> int:
 
 
 def choose(items: list[Item], records: dict[str, dict], per_lang: int, seed: int) -> list[Item]:
-    """Per language: suspected items first (flags, then review queue), then a seeded sample of the rest."""
+    """Per language: suspected items first (flags, then review queue), then a sample of the rest.
+
+    Every group is in a seeded random order, so a short sheet is not just the first ids (one subject).
+    """
     chosen: list[Item] = []
     for lang in sorted({it.lang for it in items}):
         mine = [it for it in items if it.lang == lang and it.translation]
         rec = {it.key: records.get(it.key, {}) for it in mine}
-        flagged = sorted((it for it in mine if rec[it.key].get("flags")), key=lambda i: i.id)
+        flagged = sorted((it for it in mine if rec[it.key].get("flags")), key=lambda i: _rank(seed, i.key))
         queued = sorted(
-            (it for it in mine if not rec[it.key].get("flags") and rec[it.key].get("uncertain")), key=lambda i: i.id
+            (it for it in mine if not rec[it.key].get("flags") and rec[it.key].get("uncertain")),
+            key=lambda i: _rank(seed, i.key),
         )
         rest = sorted((it for it in mine if it not in flagged and it not in queued), key=lambda i: _rank(seed, i.key))
         random_share = max(1, per_lang // 3) if per_lang >= 2 else 0
