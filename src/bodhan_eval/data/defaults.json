@@ -8,7 +8,7 @@
   "threshold_grid": [0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9],
   "min_labels_to_tune": 5,
   "check_params": {
-    "_comment": "entity_missing_score: a source name or acronym found neither in the translation (Latin or transliterated) nor in the back-translation; single words score 0.1 less. Below every default flag threshold on purpose: alone it is a hint (names are often translated or written as exonyms, e.g. BCE -> கி.மு, Satluj -> শতদ্রু), and it flags only together with the judge or the back-translation (D46).",
+    "_comment": "asr_min_deleted_words: 2 (was 3; D48): two long words cut from speech were missed, and on 180 real outputs the lower minimum added only real errors (bracketed text Indic-Speak skipped). entity_missing_score: a source name or acronym found neither in the translation (Latin or transliterated) nor in the back-translation; single words score 0.1 less. Below every default flag threshold on purpose: alone it is a hint (names are often translated or written as exonyms, e.g. BCE -> கி.மு, Satluj -> শতদ্রু), and it flags only together with the judge or the back-translation (D46).",
     "script_min_expected_share": 0.6,
     "untranslated_min_words": 4,
     "length_ratio_z": 3.0,
@@ -20,7 +20,7 @@
     "entity_match_similarity": 85,
     "entity_max_transliterations": 8,
     "entity_missing_score": 0.45,
-    "asr_min_deleted_words": 3,
+    "asr_min_deleted_words": 2,
     "asr_min_deleted_chars": 10,
     "asr_tail_min_words": 2,
     "asr_min_repeated_words": 2,
