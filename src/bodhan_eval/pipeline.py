@@ -312,7 +312,7 @@ def prefetch_transliterations(items: list[Item], ctx: RunContext, concurrency: i
     Items that share a name would otherwise race to pay for the same call before the cache has it.
     A failed call is stored as "" so the entity check falls back to the back-translation without retrying.
     """
-    if not ctx.bodhan.available("translate"):
+    if not ctx.bodhan.available("transliterate"):
         return
     wanted = sorted(
         {

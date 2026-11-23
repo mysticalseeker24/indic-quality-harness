@@ -91,3 +91,21 @@ def test_k6_direct_transliteration_calls_are_capped_per_item(start_stub, make_ct
     r = run_one(EntityCheck, ctx, source, "वे सभी वैज्ञानिक थे।")  # no prefetch: the check calls directly
     assert r.checks["entities"]["status"] == "ok"
     assert [q["path"] for q in stub.requests].count("/transliterate") == 2
+
+
+def test_k6_rejected_transliteration_key_costs_one_request_per_run(start_stub, make_ctx) -> None:
+    """Only the three documented keys set: the translate key is refused for transliteration (D29)."""
+    stub = start_stub({"transliterate": {"hi": {"Newton": "न्यूटन"}}})
+    stub.add_fault("/transliterate", 401, times=-1, code="invalid_api_key_error")
+    ctx = make_ctx(stub)
+    items = [
+        Item(id="1", lang="hi", source="The laws of Newton describe motion.", translation="न्यूटन के नियम गति बताते हैं।"),
+        Item(id="2", lang="hi", source="Einstein and Curie were scientists.", translation="वे वैज्ञानिक थे।"),
+    ]
+    prefetch_transliterations(items, ctx, concurrency=1)
+    assert [q["path"] for q in stub.requests] == ["/transliterate"]
+    assert len(ctx.transliterations) >= 2  # several terms wanted, one request sent
+    assert set(ctx.transliterations.values()) == {""}  # stored as failed: the check uses the back-translation
+    for it in items:
+        assert run_check(EntityCheck(), ItemResult(item=it), ctx)["status"] == "ok"
+    assert [q["path"] for q in stub.requests] == ["/transliterate"]

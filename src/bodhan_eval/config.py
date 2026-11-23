@@ -133,6 +133,7 @@ class Settings:
 
     bodhan_base_url: str = "https://api.bodhan.ai"
     translate_key: str | None = None
+    transliterate_key: str | None = None
     speak_key: str | None = None
     transcribe_key: str | None = None
     llm_base_url: str | None = None
@@ -147,9 +148,14 @@ class Settings:
     def from_env(cls) -> Settings:
         load_dotenv_if_present()
         fallback = os.environ.get("BODHAN_API_KEY") or None  # Cookbook convention: one key for all models
+        translate_key = os.environ.get("BODHAN_TRANSLATE_KEY") or fallback
         return cls(
             bodhan_base_url=os.environ.get("BODHAN_BASE_URL", "https://api.bodhan.ai").rstrip("/"),
-            translate_key=os.environ.get("BODHAN_TRANSLATE_KEY") or fallback,
+            translate_key=translate_key,
+            # Keys are scoped per model (API_NOTES, 23 Nov), so transliteration has its own optional key. The
+            # translate key is the last resort for setups with only the three documented keys; if the gateway
+            # rejects it, the client stops transliterating and the entity check uses the back-translation (D29).
+            transliterate_key=os.environ.get("BODHAN_TRANSLITERATE_KEY") or fallback or translate_key,
             speak_key=os.environ.get("BODHAN_SPEAK_KEY") or fallback,
             transcribe_key=os.environ.get("BODHAN_TRANSCRIBE_KEY") or fallback,
             llm_base_url=os.environ.get("LLM_BASE_URL") or None,

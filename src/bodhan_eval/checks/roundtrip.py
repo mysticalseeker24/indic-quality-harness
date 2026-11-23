@@ -530,7 +530,7 @@ class EntityCheck(Check):
         bt_text = r.state.get("bt_text", "")
         bt_tokens = [t.text.lower() for t in word_tokens(bt_text)]
         renderings = r.state.setdefault("entity_renderings", {})
-        translit_ok = ctx.bodhan.available("translate") and transliterable(r.item.lang)
+        translit_ok = ctx.bodhan.available("transliterate") and transliterable(r.item.lang)
         direct_calls, cap = 0, int(self.param(ctx, "entity_max_transliterations"))
         for word, a, b in ents:
             if word.lower() in tgt.lower():

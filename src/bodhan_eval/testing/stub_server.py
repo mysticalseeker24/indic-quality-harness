@@ -149,21 +149,22 @@ class _Handler(BaseHTTPRequestHandler):
         state = self.server.state
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         path = self.path.split("?", 1)[0]
+        bearer = self.headers.get("Authorization", "").removeprefix("Bearer ").strip()  # placeholder keys only
         if state.latency_s:
             time.sleep(state.latency_s)
         fault = state.take_fault(path, body)
         if fault is not None:
-            state.log(path, fault.status, fault=True)
+            state.log(path, fault.status, fault=True, bearer=bearer)
             headers = {"retry-after": fault.retry_after} if fault.retry_after else {}
             self._error(fault.status, fault.code, fault.message, headers)
             return
         try:
             status, ctype, payload, details = self._route(path, body)
         except _ApiError as e:
-            state.log(path, e.status, error=e.code)
+            state.log(path, e.status, error=e.code, bearer=bearer)
             self._error(e.status, e.code, e.message)
             return
-        state.log(path, status, **details)
+        state.log(path, status, bearer=bearer, **details)
         self._send(status, ctype, payload)
 
     # ---- routing -------------------------------------------------------------
@@ -372,7 +373,11 @@ class StubServer:
         return f
 
     def env(self) -> dict[str, str]:
-        """Environment variables that point the harness at this stub (placeholder keys, never real ones)."""
+        """Environment variables that point the harness at this stub (placeholder keys, never real ones).
+
+        Only the three documented Bodhan keys, as the graders set them; transliteration falls back to the
+        translate key.
+        """
         return {
             "BODHAN_BASE_URL": self.url,
             "BODHAN_TRANSLATE_KEY": "stub-key",

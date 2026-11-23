@@ -45,6 +45,7 @@ def settings_for(stub: StubServer, **kw) -> Settings:
     base = {
         "bodhan_base_url": stub.url,
         "translate_key": "stub-key",
+        "transliterate_key": "stub-key",
         "speak_key": "stub-key",
         "transcribe_key": "stub-key",
         "llm_base_url": f"{stub.url}/v1",
@@ -126,6 +127,36 @@ def test_transliterate_uses_chat_transport_when_route_is_missing(stub: StubServe
     stub.add_fault("/transliterate", 404, times=-1)
     assert bodhan(stub, cache).transliterate("Newton", "hi") == "न्यूटन"
     assert stub.requests[-1]["model"] == "indic-transliterate"
+
+
+def test_transliterate_sends_its_own_key(stub: StubServer, cache: Cache) -> None:
+    """Bodhan keys are scoped per model (API_NOTES, 23 Nov): the translate key cannot transliterate."""
+    c = bodhan(stub, cache, translate_key="translate-placeholder", transliterate_key="transliterate-placeholder")
+    c.translate("Water boils.", "hi")
+    c.transliterate("Newton", "hi")
+    assert [(r["path"], r["bearer"]) for r in stub.requests] == [
+        ("/translate", "translate-placeholder"),
+        ("/transliterate", "transliterate-placeholder"),
+    ]
+
+
+def test_transliteration_stays_on_the_translate_cost_line(stub: StubServer, cache: Cache) -> None:
+    budget = Budget(None)
+    bodhan(stub, cache, budget).transliterate("Newton", "hi")
+    assert set(budget.used) == {"translate"} and budget.calls == {"translate": 1}
+
+
+def test_rejected_key_turns_the_service_off_for_the_run(stub: StubServer, cache: Cache) -> None:
+    """A key the gateway refuses is not sent again: one failed request, then ServiceUnavailable without HTTP."""
+    stub.add_fault("/transliterate", 401, times=-1, code="invalid_api_key_error")
+    c = bodhan(stub, cache)
+    with pytest.raises(BodhanError) as err:
+        c.transliterate("Newton", "hi")
+    assert err.value.status == 401
+    assert c.available("transliterate") is False and c.available("translate") is True
+    with pytest.raises(ServiceUnavailable, match="BODHAN_TRANSLITERATE_KEY"):
+        c.transliterate("Einstein", "hi")
+    assert [r["path"] for r in stub.requests] == ["/transliterate"]
 
 
 def test_other_client_errors_do_not_switch_transport(stub: StubServer, cache: Cache) -> None:

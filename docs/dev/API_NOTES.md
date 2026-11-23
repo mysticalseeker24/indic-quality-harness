@@ -15,7 +15,7 @@ Error envelope: `{"error": {"message", "code", "request_id"}}`. Codes: `invalid_
 
 **Live findings, 23 Nov 2026 (key probe, ~₹0.01):**
 - `POST /translate` and `POST /transliterate` return `404 {"detail":"Not Found"}` without an `x-request-id` header, so the request never reaches the gateway route, although the docs still call them "the product surface". The docs' second transport works: `POST /v1/chat/completions` with `model: "indic-translate"`, one user message holding the text, and `target_language` (plus optional `script`) as top-level fields. The answer is in `choices[0].message.content`, and `finish_reason: "length"` means truncated. Transliteration works the same way with `model: "indic-transliterate"`, `language`, `script`. The docs say both transports give identical output, so the cache key stays transport-independent. Clients fall back on 404 (D24).
-- Keys are scoped per model: `GET /v1/models` lists only the key's own model. Transliteration therefore needs its own key; the translate key does not cover it.
+- Keys are scoped per model: `GET /v1/models` lists only the key's own model. Transliteration therefore needs its own key; the translate key does not cover it. A key used on another model gets HTTP 403 (live: translate key on `indic-transliterate`). The harness reads the optional `BODHAN_TRANSLITERATE_KEY` and stops sending a refused key for the rest of the run (D29). Verified live: transliteration with its own key, ₹0.00006.
 - `/v1/audio/speech` (WAV, RIFF) and `/v1/audio/transcriptions` work as documented.
 
 Prices (from the assignment): Indic-Translate ₹0.20 / 10k output tokens; Indic-Speak ₹6 / 10k input characters; Indic-Transcribe ₹0.10 / audio minute.

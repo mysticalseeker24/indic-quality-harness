@@ -12,20 +12,20 @@ Every Claude Code session reads this first and rewrites "Current state" at each 
   - Clean-item false-alarm suite (`tests/e2e/test_false_alarms.py`, 20 items hi/bn/ta): **0 flagged, 0 in review**. A guard rejects control characters in fixtures. Shell heredocs collapse `\\`, so generate fixtures from files and use `chr(92)`.
   - **Live API finding (D24):** hosted `/translate` and `/transliterate` answer 404; the documented chat transport works. Clients fall back automatically (verified live). Keys are scoped per model (API_NOTES).
   - Secrets: `.env` filled by Saksham (Bodhan translate/speak/transcribe/transliterate keys, OpenRouter key; `LLM_MODEL` empty until the P3 bake-off). `tests/unit/test_repo_hygiene.py` fails `make check` if `.env` is tracked or any repo file holds a value from it or a key-shaped string.
-  - `make check`: ruff and mypy clean, **313 tests pass** (~20 s).
-- **Paid usage so far:** Bodhan ≈ ₹0.01 of ₹200 (key probe + one live fallback check) · OpenRouter $0 (key limit shows 50).
+  - **D29 (after the gate, Saksham's yes):** optional `BODHAN_TRANSLITERATE_KEY`, falling back to `BODHAN_API_KEY`, then the translate key. A key refused with 401/403 is not sent again in the run (live: the translate key gets 403 on `indic-transliterate`; the own key works). Transliteration spend stays on the `translate` cost line.
+  - `make check`: ruff and mypy clean, **321 tests pass** (~20 s).
+- **Paid usage so far:** Bodhan ≈ ₹0.01 of ₹200 (key probe, one live fallback check, one live transliteration) · OpenRouter $0 (key limit shows 50).
 - **Environment (Windows 11):** `.venv` on Python 3.13.9 (CI runs 3.10 and 3.12); GNU make from winget. In PowerShell put `.venv\Scripts` and `%LOCALAPPDATA%\Microsoft\WinGet\Links` on PATH before `make`. PowerShell 5.1 drops empty-string arguments to native commands: use bash for those. Repo git config: `core.autocrlf=false`, GitHub credentials via `gh auth git-credential` (repo-local). `.claude/` is ignored via `.git/info/exclude`.
-- **Git:** `main`. Commit messages are plain conventional commits, no attribution trailers (D23). Push in batches of ≥5 commits. **4 commits are not pushed yet** (go out with the next batch).
+- **Git:** `main`. Commit messages are plain conventional commits, no attribution trailers (D23). Push in batches of ≥5 commits. Everything up to the D29 commit is pushed.
 - **Exam project:** reminded at the Phase 1 gate; status unknown here.
 - **Repo visibility:** private (make public before export — CLAUDE.md §3).
 
 ## Open questions for Saksham
 
-1. **Read `BODHAN_TRANSLITERATE_KEY`?** Live probe: keys are scoped per model, so the translate key cannot transliterate. Proposal: clients use `BODHAN_TRANSLITERATE_KEY`, falling back to `BODHAN_API_KEY`, then the translate key. The graders set only the three documented keys, so without it entity checks fall back to Latin and back-translation matching. Env contract change → needs a yes.
-2. **Ack D26:** `entity_match_similarity` raised 72 -> 85 (a default in `defaults.json`, changed as a Phase 2 table fix).
-3. **Before the repo goes public:** `.gitattributes` exports itself and names `CLAUDE.md`; README "AI assistance" wording (the spec asks for a brief note); keep `CLAUDE.md` and `docs/dev/` tracked or not.
-4. setuptools warns that the `project.license` TOML table is deprecated (removal 2027-02-18). `license = "Apache-2.0"` needs `setuptools>=77`.
-5. Security: the keys were pasted into a chat transcript; consider rotating them after the submission.
+1. **Ack D26:** `entity_match_similarity` raised 72 -> 85 (a default in `defaults.json`, changed as a Phase 2 table fix).
+2. **Before the repo goes public:** `.gitattributes` exports itself and names `CLAUDE.md`; README "AI assistance" wording (the spec asks for a brief note); keep `CLAUDE.md` and `docs/dev/` tracked or not.
+3. setuptools warns that the `project.license` TOML table is deprecated (removal 2027-02-18). `license = "Apache-2.0"` needs `setuptools>=77`.
+4. Security: the keys were pasted into a chat transcript; consider rotating them after the submission.
 
 ## Known issues still open
 
@@ -56,4 +56,4 @@ Next up: Phase 3 — K1 and K11 test-first against the stub, then K2 and the jud
 |---|---|---|---|
 | 0 | 23 Nov 2026 | claude.ai | Design, research, drafts, starter pack, prompt playbook |
 | 1 | 23 Nov 2026 | coding session | Phase 1: K12/K4/K10, core unit tests, stub server, pipeline/CLI/report/diff, offline e2e + determinism; repo connected; commit history rewritten without trailers |
-| 1b | 23 Nov 2026 | coding session | Phase 2: K3/K6/K8, check tables, 4 table-driven fixes, clean false-alarm suite (0/20); .env + hygiene test; live probe found 404 text routes → chat-transport fallback |
+| 1b | 23 Nov 2026 | coding session | Phase 2: K3/K6/K8, check tables, 4 table-driven fixes, clean false-alarm suite (0/20); .env + hygiene test; live probe found 404 text routes → chat-transport fallback; D29 transliterate key (live-verified) |

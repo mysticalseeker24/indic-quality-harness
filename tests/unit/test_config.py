@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from bodhan_eval.config import canonical_category, canonical_severity, lang_info, normalize_lang_code
+from bodhan_eval.clients import KEY_ENV
+from bodhan_eval.config import Settings, canonical_category, canonical_severity, lang_info, normalize_lang_code
 
 
 @pytest.mark.parametrize(
@@ -43,3 +46,29 @@ def test_canonical_category(raw: str | None, expected: str | None) -> None:
 def test_canonical_severity_defaults_to_major() -> None:
     assert canonical_severity(None) == "major"
     assert canonical_severity("weird") == "major"
+
+
+BODHAN_KEY_VARS = [*KEY_ENV.values(), "BODHAN_API_KEY"]
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        pytest.param({"BODHAN_TRANSLITERATE_KEY": "own", "BODHAN_API_KEY": "any", "BODHAN_TRANSLATE_KEY": "tr"}, "own",
+                     id="own-key-wins"),
+        pytest.param({"BODHAN_API_KEY": "any", "BODHAN_TRANSLATE_KEY": "tr"}, "any", id="single-key-next"),
+        pytest.param({"BODHAN_TRANSLATE_KEY": "tr"}, "tr", id="translate-key-last"),
+        pytest.param({}, None, id="none-set"),
+    ],
+)  # fmt: skip
+def test_transliterate_key_fallback_chain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, env: dict[str, str], expected: str | None
+) -> None:
+    monkeypatch.chdir(tmp_path)  # from_env loads ./.env; there is none here
+    for name in BODHAN_KEY_VARS:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    s = Settings.from_env()
+    assert s.transliterate_key == expected
+    assert s.translate_key == (env.get("BODHAN_TRANSLATE_KEY") or env.get("BODHAN_API_KEY"))  # unchanged

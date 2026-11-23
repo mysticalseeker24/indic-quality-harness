@@ -41,6 +41,17 @@ SPEAK_MODEL = "indic-speak"
 TRANSCRIBE_MODEL = "indic-transcribe"
 CHAT_PATH = "/v1/chat/completions"  # Bodhan's second, documented transport for the text models
 
+# One Bodhan key per model (keys are scoped per model); see Settings.from_env for the fallbacks.
+KEY_ENV = {
+    "translate": "BODHAN_TRANSLATE_KEY",
+    "transliterate": "BODHAN_TRANSLITERATE_KEY",
+    "speak": "BODHAN_SPEAK_KEY",
+    "transcribe": "BODHAN_TRANSCRIBE_KEY",
+}
+# Transliteration is priced per output token like translation and reported on the translate cost line,
+# so the cost breakdown in summary.json keeps its keys.
+COST_LINE = {"transliterate": "translate"}
+
 
 class ServiceUnavailable(RuntimeError):
     """A model cannot be called (no key configured). Checks that need it skip themselves."""
@@ -87,21 +98,24 @@ class BodhanClient:
         self.budget = budget
         self.costs = defaults()["costs_inr"]
         n = max(1, settings.concurrency)
-        self._slots = {svc: threading.BoundedSemaphore(n) for svc in ("translate", "speak", "transcribe")}
+        self._slots = {svc: threading.BoundedSemaphore(n) for svc in KEY_ENV}
         self._chat_transport: set[str] = set()  # product routes the gateway answered 404 for (see _text_call)
+        self._rejected: dict[str, int] = {}  # service -> HTTP status of the auth failure (see _post)
 
     # ---- plumbing -------------------------------------------------------
     def _key_for(self, service: str) -> str:
-        key = {"translate": self.s.translate_key, "speak": self.s.speak_key, "transcribe": self.s.transcribe_key}[
-            service
-        ]
+        key = {
+            "translate": self.s.translate_key,
+            "transliterate": self.s.transliterate_key,
+            "speak": self.s.speak_key,
+            "transcribe": self.s.transcribe_key,
+        }[service]
         if not key:
-            env = {
-                "translate": "BODHAN_TRANSLATE_KEY",
-                "speak": "BODHAN_SPEAK_KEY",
-                "transcribe": "BODHAN_TRANSCRIBE_KEY",
-            }[service]
-            raise ServiceUnavailable(f"{env} is not set")
+            raise ServiceUnavailable(f"{KEY_ENV[service]} is not set")
+        if service in self._rejected:
+            raise ServiceUnavailable(
+                f"the {service} key was rejected (HTTP {self._rejected[service]}); set {KEY_ENV[service]}"
+            )
         return key
 
     def available(self, service: str) -> bool:
@@ -139,24 +153,32 @@ class BodhanClient:
                 )
             return r
 
-        with self._slots[service]:
-            return _retry(once, self.s.max_retries, f"{service} {path}")
+        try:
+            with self._slots[service]:
+                return _retry(once, self.s.max_retries, f"{service} {path}")
+        except BodhanError as e:
+            if e.status in (401, 403):  # the key will not work for this model: stop sending it for the rest of the run
+                if service not in self._rejected:
+                    log.warning("%s key rejected (HTTP %s); %s calls are off for this run", service, e.status, service)
+                self._rejected[service] = e.status
+            raise
 
     def _cached(self, service: str, kind: str, model: str, params: dict, payload: Any, estimate: float, call):
         key = self.cache.key(kind, model, params, payload)
+        line = COST_LINE.get(service, service)
         hit = self.cache.get(key)
         if hit is not None:
             value, cost = hit
-            self.budget.record_cache_hit(service, cost)
+            self.budget.record_cache_hit(line, cost)
             return value, True
         self._key_for(service)  # fail fast without reserving budget
-        self.budget.reserve(service, estimate)
+        self.budget.reserve(line, estimate)
         try:
             value, cost = call()
         except BaseException:
             self.budget.release(estimate)
             raise
-        self.budget.settle(service, estimate, cost)
+        self.budget.settle(line, estimate, cost)
         self.cache.put(key, kind, value, cost)
         return value, False
 
@@ -229,12 +251,12 @@ class BodhanClient:
         def call():
             body = {"text": text, "language": language, "script": "native"}
             out, _, tokens = self._text_call(
-                "translate", "/transliterate", TRANSLITERATE_MODEL, "transliteration", body
+                "transliterate", "/transliterate", TRANSLITERATE_MODEL, "transliteration", body
             )
             return out, tokens * self.costs["translate_per_output_token"]
 
         value, _ = self._cached(
-            "translate", "transliterate", TRANSLITERATE_MODEL, {"language": language}, text, estimate, call
+            "transliterate", "transliterate", TRANSLITERATE_MODEL, {"language": language}, text, estimate, call
         )
         return value
 

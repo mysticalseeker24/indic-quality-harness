@@ -47,6 +47,7 @@ def make_ctx(tmp_path: Path) -> Iterator[Callable[..., RunContext]]:
         settings = Settings(
             bodhan_base_url=stub.url if stub else "http://127.0.0.1:9",
             translate_key="stub-key" if stub else None,
+            transliterate_key="stub-key" if stub else None,
             speak_key="stub-key" if stub else None,
             transcribe_key="stub-key" if stub else None,
             llm_base_url=f"{stub.url}/v1" if stub and judge else None,

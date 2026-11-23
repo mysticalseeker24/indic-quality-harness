@@ -56,7 +56,7 @@ You cannot see your own context usage precisely, so checkpoint on these triggers
 3. **The LLM never writes, rewrites or "corrects" Indian-language text.** It reads and classifies only; the judge answers with token indices; LLM prose passes through `clients.strip_indic`. No post-editing steps.
 4. **The injector makes Indic errors programmatically**, or perturbs the *English* and re-translates with Indic-Translate. It never calls the LLM.
 5. **Nothing special-cased to demo data.** Generic defaults (`data/defaults.json`) or run-time calibration only; language behaviour only via `data/langs.json`.
-6. **No secrets in the repo.** Keys only from env (`BODHAN_TRANSLATE_KEY`, `BODHAN_SPEAK_KEY`, `BODHAN_TRANSCRIBE_KEY`, fallback `BODHAN_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`). Never print key values. No realistic-looking fake keys in tests/docs. Never commit `.env`, audio or `outputs/`.
+6. **No secrets in the repo.** Keys only from env (`BODHAN_TRANSLATE_KEY`, `BODHAN_SPEAK_KEY`, `BODHAN_TRANSCRIBE_KEY`, optional `BODHAN_TRANSLITERATE_KEY` (D29), fallback `BODHAN_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`). Never print key values. No realistic-looking fake keys in tests/docs. Never commit `.env`, audio or `outputs/`.
 7. Model ids exactly as in the Cookbook rules file (`indic-translate`, `indic-transliterate`, `indic-speak`, `indic-transcribe`, `indic-ocr`); never Core/Flex names as ids.
 8. Never open, read or search the exam folder (`../iqh-exam/`). The only allowed use: in Phase 7, pass the exact file paths Saksham gives you to the CLI, run once, and report the numbers without tuning anything in response.
 
