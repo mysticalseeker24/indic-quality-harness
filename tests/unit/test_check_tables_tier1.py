@@ -164,3 +164,12 @@ def test_entities_must_not_flag(start_stub, make_ctx, run_chain, source, transla
     r = run_chain([BackTranslationCheck, EntityCheck], ctx, source, translation)
     assert r.checks["entities"]["status"] == "ok"
     assert strong(r, "term") == [], [(s.category, s.score, s.evidence) for s in r.signals]
+
+
+def test_a_missing_name_alone_is_a_hint_for_review_not_a_flag(start_stub, make_ctx, run_chain, fuse_item) -> None:
+    # live false alarms: names are often translated or written as exonyms (BCE -> கி.மு, Satluj -> শতদ্রু), D46
+    source, translation, translit, bt = ENTITY_CATCH[0].values
+    ctx = entity_ctx(start_stub, make_ctx, translation, translit, bt)
+    r = run_chain([BackTranslationCheck, EntityCheck], ctx, source, translation)
+    flags, uncertain = fuse_item(r)
+    assert not [f for f in flags if f.category == "term"] and [f for f in uncertain if f.category == "term"]

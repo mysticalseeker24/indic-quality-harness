@@ -589,7 +589,9 @@ class EntityCheck(Check):
             near = ""
             if best[1] >= 0:
                 near = f"; closest translation words {tgt[tok_objs[best[1]].start : tok_objs[best[2]].end]!r} ({best[0]:.0f}% similar)"
-            score = 0.55 if (" " in word or word.isupper() or any(c.isdigit() for c in word)) else 0.45
+            score = ctx.params["entity_missing_score"]  # a hint below the flag threshold: names are often translated
+            if not (" " in word or word.isupper() or any(c.isdigit() for c in word)):
+                score -= 0.1  # a single capitalised word is more often an ordinary word than a name
             if not bt_text:
                 score -= 0.1
             span = (tok_objs[best[1]].start, tok_objs[best[2]].end) if best[1] >= 0 and best[0] >= 50 else None
