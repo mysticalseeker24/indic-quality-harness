@@ -110,6 +110,20 @@ def test_extra_labels_label_the_reviewed_items_and_are_copied_not_edited(tmp_pat
     assert "labels" not in gold[("t36", "hi")]  # the gold file is input, never rewritten
 
 
+def test_the_rest_of_the_bakeoff_complements_the_reviewed_items(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    data.mkdir()
+    extra = write(tmp_path / "saksham.jsonl", [
+        {"id": f"t{k}", "lang": lang, "labels": [lab("mistranslation", "saksham")]}
+        for k, lang in ((36, "hi"), (37, "ta"), (38, "bn"))
+    ])  # fmt: skip
+    run(tmp_path, "--extra-labels", str(extra), "--bakeoff-size", "10", "--bakeoff-heldout", "0")
+    bake = read(data / "bakeoff.jsonl")
+    assert len(bake) == 10 and sum(1 for r in bake if not r["labels"]) == 5  # still half clean overall
+    filled = [r["labels"][0]["type"] for r in bake if r["labels"] and r["labels"][0]["annotator"] != "saksham"]
+    assert len(filled) == 2 and "mistranslation" not in filled  # categories the review did not cover come first
+
+
 def test_split_is_deterministic_and_seeded(tmp_path: Path) -> None:
     data = run(tmp_path)
     first = (data / "demo_labels.jsonl").read_bytes(), (data / "bakeoff.jsonl").read_bytes()

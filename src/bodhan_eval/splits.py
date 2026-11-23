@@ -11,8 +11,9 @@ Writes into ``--out-dir``:
   splits.json        what went where
 Both subsets are half clean. Error items are taken round-robin over categories, clean items one at a time,
 each time from the language least represented so far, in a seeded order: every category and language
-appears. Items labelled by ``--extra-labels`` (a human review of real outputs) all go into the bake-off.
-Input files are never rewritten.
+appears. Items labelled by ``--extra-labels`` (a human review of real outputs) all go into the bake-off, and
+count toward ``--bakeoff-size``: the injected items that fill the rest keep the whole set about half clean
+and start with the categories and languages the review covered least. Input files are never rewritten.
 """
 
 from __future__ import annotations
@@ -23,7 +24,6 @@ import json
 import logging
 import os
 from collections import Counter
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -50,28 +50,37 @@ def _rank(seed: int, r: dict) -> int:
     return int(hashlib.sha256(f"{seed}|{r['id']}::{r['lang']}".encode()).hexdigest()[:12], 16)
 
 
-def _balanced(rows: list[dict], n: int, seed: int, group: Callable[[dict], str], langs: Counter[str]) -> list[dict]:
-    """Up to n rows, round-robin over groups; within a group the language least represented so far."""
+def _category(r: dict) -> str:
+    return str(r["labels"][0]["type"]) if r["labels"] else "clean"
+
+
+def _balanced(rows: list[dict], n: int, seed: int, groups: Counter[str], langs: Counter[str]) -> list[dict]:
+    """Up to n rows, each from the group (category) least represented so far, ties by name; within it the
+    language least represented so far. With empty counters this is a round-robin over the groups."""
     pool: dict[str, list[dict]] = {}
     for r in sorted(rows, key=lambda r: _rank(seed, r)):
-        pool.setdefault(group(r), []).append(r)
+        pool.setdefault(_category(r), []).append(r)
     out: list[dict] = []
     while len(out) < n and any(pool.values()):
-        for g in sorted(pool):
-            if pool[g] and len(out) < n:
-                r = min(pool[g], key=lambda x: langs[x["lang"]])  # min keeps the seeded order among ties
-                pool[g].remove(r)
-                out.append(r)
-                langs[r["lang"]] += 1
+        g = min((g for g in pool if pool[g]), key=lambda g: (groups[g], g))
+        r = min(pool[g], key=lambda x: langs[x["lang"]])  # min keeps the seeded order among ties
+        pool[g].remove(r)
+        out.append(r)
+        groups[g] += 1
+        langs[r["lang"]] += 1
     return out
 
 
-def half_clean(rows: list[dict], n: int, seed: int) -> list[dict]:
+def half_clean(rows: list[dict], n: int, seed: int, have: list[dict] | None = None) -> list[dict]:
+    """n rows from ``rows`` so that together with ``have`` (rows already chosen) about half are clean, and
+    categories and languages ``have`` covers least come first."""
+    have = have or []
     clean = [r for r in rows if not r["labels"]]
     errors = [r for r in rows if r["labels"]]
-    langs: Counter[str] = Counter()
-    picked = _balanced(errors, n - min(n // 2, len(clean)), seed, lambda r: r["labels"][0]["type"], langs)
-    return picked + _balanced(clean, n - len(picked), seed, lambda r: "clean", langs)
+    groups, langs = Counter(_category(r) for r in have), Counter(r["lang"] for r in have)
+    want_clean = max(0, min((len(have) + n) // 2 - groups["clean"], len(clean), n))
+    picked = _balanced(errors, n - want_clean, seed, groups, langs)
+    return picked + _balanced(clean, n - len(picked), seed, groups, langs)
 
 
 def _audio_to(row: dict, src_dir: Path, out_dir: Path) -> dict:
@@ -101,7 +110,7 @@ def split(args: argparse.Namespace) -> dict[str, Any]:
     reviewed = textual([{**r, "labels": extra[_key(r)]} for r in gold + held if _key(r) in extra])
     main_pool = [r for r in textual(gold) if _key(r) not in extra]
     held_pool = [r for r in textual(held) if r["lang"] == args.bakeoff_heldout_lang and _key(r) not in extra]
-    bakeoff = reviewed + half_clean(main_pool, max(0, args.bakeoff_size - len(reviewed)), args.seed)
+    bakeoff = reviewed + half_clean(main_pool, max(0, args.bakeoff_size - len(reviewed)), args.seed, reviewed)
     bakeoff += half_clean(held_pool, args.bakeoff_heldout, args.seed)
     _write(out_dir / "bakeoff.jsonl", bakeoff)
 
