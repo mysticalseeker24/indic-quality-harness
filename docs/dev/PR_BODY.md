@@ -44,6 +44,8 @@ Only as the tier-2 judge, for meaning errors that rules and round trips cannot s
 | Gujarati (never demoed) | 93 % caught, 0 false alarms |
 | Weakest | speech repetition 3 / 6, garbled speech 5 / 7, number-flag precision 57 % |
 
+**Exam run B** (a second version of the same 146 items, with `--baseline` run A): `diff.md` lists 18 new problems and 16 fixed ones per language, severity-sorted with evidence (e.g. a number changed 7.25 → 2.75 in Hindi, a unit changed l → ml in Gujarati); ₹0.98 + $0.13, 3.6 min. The whole exam (both runs) cost ₹4.81 + $1.37.
+
 **Demo set** (180 Bodhan outputs hi/ta/bn from NCERT-style Wikipedia passages, 75 planted errors, scored out of sample): planted errors caught 60 / 61, 0 / 24 clean items flagged, precision 88 %, localisation 84 %, category 96 %; 2-fold cross-validated item recall 85 %, false alarms 0 %.
 
 **Bodhan's own errors found:** of 124 flags on the un-injected outputs, 101 were real (reviewed against their evidence, `data/clean_run_review.jsonl`), 10 more after the speech fixes. The biggest: **Indic-Speak silently skips text in parentheses or brackets** (36 cases; confirmed by a controlled test: same sentence 10.67 s with the bracket, 10.41 s without the bracketed words, 12.54 s with commas). Also "achieved in 2025" → "will be achieved" in all three languages, dropped names and qualifiers, wrong technical terms in Tamil, 12.011 → 12.01, flattened Markdown.

@@ -114,6 +114,8 @@ Every model answered in strict `json_schema`. Tested with Kimi K3.1 Pro (reasoni
 
 Weakest spots, as measured: speech repetition and garbled speech (the transcriber smooths some of them over), and precision of number flags (57 %).
 
+**Exam run B** (a second version of the same 146 items, with `--baseline` run A): `diff.md` lists 18 new problems and 16 fixed ones per language, severity-sorted with evidence (e.g. a number changed 7.25 → 2.75 in Hindi, a unit changed l → ml in Gujarati); ₹0.98 + $0.13, 3.6 min. The whole exam (both runs) cost ₹4.81 + $1.37.
+
 
 **Voices** (`python -m bodhan_eval.voices`, 15 demo texts per language, every voice speaks the same text, ₹11.8; [sample_report/voices.md](sample_report/voices.md)): the two voices of each language get flagged on the same items (paired difference at most 1 item: hi Kavya/Amit 3/3, ta Anitha/Arun 5/4, bn Ishita/Sourav 3/2), with transcript CER within 3 points; Arun speaks fastest (16.5 characters/s against about 13.5). The speech errors come from the text front end (brackets, numbers), not from the voice.
 
