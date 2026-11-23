@@ -59,6 +59,9 @@ def speakable(text: str) -> str:
         blank(m.start(), m.start() + 1)
     for m in markup.URL_RE.finditer(text):
         blank(m.start(), m.end())
+    for line in markup.md_lines(text):
+        if line.kind == "table_sep":  # |---|:---:| is layout, not words
+            blank(line.start, line.end)
     for m in re.finditer(r"^\s*(?:#{1,6}|[-*+>]|\d+[.)])\s", text, re.M):
         blank(m.start(), m.end())
     for m in re.finditer(r"[|*_`#~]|^\s*:?-{3,}:?\s*$", text, re.M):
