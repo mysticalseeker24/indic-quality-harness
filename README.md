@@ -59,4 +59,6 @@ TODO: per 100 items, with and without speech checks.
 
 ## AI assistance
 
-Designed with Claude (claude.ai) and built with Claude Code; every line reviewed and explainable by the author. TODO: details.
+- **Design and research:** Claude (claude.ai) helped read the assignment and the Bodhan API docs, compare check designs, and draft the architecture, test plan and build plan.
+- **Implementation:** Claude Code wrote code and tests phase by phase against that plan. Each phase ended at a gate: `make check` (ruff, mypy, pytest) plus that phase's acceptance tests.
+- **Review and decisions:** the author approved every default, threshold and interface change, set the spending caps for live API runs, and reviewed every change; every line is explainable in the debrief.
