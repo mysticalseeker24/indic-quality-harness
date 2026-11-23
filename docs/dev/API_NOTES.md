@@ -22,7 +22,7 @@ Error envelope: `{"error": {"message", "code", "request_id"}}`. Codes: `invalid_
 - Indic-Speak returns mono 16-bit 24 kHz WAV, speech level ≈ −19 dBFS, no clipping, natural pauses. 1.4–4.9 s for 1–2 short sentences.
 - Indic-Speak answered **HTTP 429 with `Retry-After: 58`** under 6 parallel requests: the speak limit halved to 3 and the retry after 58 s succeeded (K11 working live). Expect TTS rate limits at modest parallelism; the 60 s `Retry-After` cap is about right.
 - Indic-Transcribe reproduced the generated hi and bn text exactly (CER 0) and ta within 2 % CER, on single chunks.
-- **Digits are read out as words, and in Tamil in English**: "365" became "three hundred and sixty five", transcribed in Tamil script (த்ரீ ஹண்ட்ரட் அண்ட் சிக்ஸ்டி ஃபைவ்). The asr check treats a numeral read out as words as explained (D38); whether the number spoken is the right one is not checked. Possibly worth reporting to Bodhan as a speech-quality observation (code-mixed numerals in Tamil).
+- **Digits are read out as words, and in Tamil in English**: "365" became "three hundred and sixty five", transcribed in Tamil script (த்ரீ ஹண்ட்ரட் அண்ட் சிக்ஸ்டி ஃபைவ்). The asr check treats a numeral read out as words as explained (D38); whether the number spoken is the right one is not checked. Possibly worth reporting to Bodhan as a speech-quality observation (code-mixed numerals in Tamil). Saksham listened (23 Nov): both clips sound good; the Tamil voice says "three hundred and sixty five" in English with a Tamil accent. Common in spoken Tamil, but unexpected in a Tamil lesson; the harness does not flag it.
 
 Prices (from the assignment): Indic-Translate ₹0.20 / 10k output tokens; Indic-Speak ₹6 / 10k input characters; Indic-Transcribe ₹0.10 / audio minute.
 
