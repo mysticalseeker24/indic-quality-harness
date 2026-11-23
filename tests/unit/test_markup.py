@@ -65,6 +65,13 @@ def test_brace_problems(body: str, broken: bool) -> None:
     assert brace_problems(body) is broken
 
 
+def test_math_key_treats_braces_around_one_token_as_the_same_formula() -> None:
+    assert math_key("ax^2 + bx + c = 0") == math_key("ax^{2} + bx + c = 0")  # seen live: Bengali added the braces
+    assert math_key(r"x_{i} + y^{\alpha}") == math_key(r"x_i + y^\alpha")
+    assert math_key("x^{10}") != math_key("x^10")  # ^10 is x to the power 1, followed by 0
+    assert math_key("x^{2}") != math_key("x^{3}")
+
+
 def test_math_key_ignores_text_contents_and_whitespace() -> None:
     assert math_key(r"\text{speed} = d / t") == math_key(r"\text{गति}=d/t")
     assert math_key("v = d/t") != math_key("v = d/s")

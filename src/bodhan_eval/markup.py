@@ -32,8 +32,10 @@ class MathSeg:
 
 
 def math_key(body: str) -> str:
-    """Comparison key for a formula: \\text{...} contents removed (they may be translated), whitespace removed."""
-    return re.sub(r"\s+", "", TEXT_CMD_RE.sub(r"\\text{}", body))
+    """Comparison key for a formula: \\text{...} contents removed (they may be translated), whitespace removed,
+    and braces around a one-token super/subscript dropped (``x^{2}`` renders exactly like ``x^2``)."""
+    key = re.sub(r"\s+", "", TEXT_CMD_RE.sub(r"\\text{}", body))
+    return re.sub(r"([\^_])\{([A-Za-z0-9]|\\[A-Za-z]+)\}", r"\1\2", key)
 
 
 def math_segments(text: str) -> list[MathSeg]:
