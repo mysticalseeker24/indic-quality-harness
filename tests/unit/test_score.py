@@ -110,6 +110,15 @@ def test_exclude_drops_the_calibration_items(files, tmp_path: Path) -> None:
     assert card["headline"]["false_alarm_rate"] == 0.0
 
 
+def test_labels_file_labels_items_the_gold_left_unlabelled(files, tmp_path: Path) -> None:
+    review = write(tmp_path / "review.jsonl", [{"id": "g", "lang": "hi", "labels": [lab("number", [0, 2], "saksham")]}])
+    card = score(*files, labels=[review])
+    assert card["coverage"]["unlabelled_skipped"] == 0 and card["headline"]["scored_items"] == 7
+    assert card["per_method"]["saksham"] == {"labels": 2, "detected": 2, "recall": 1.0}
+    report, gold = files
+    assert main(["--report", str(report), "--gold", str(gold), "--labels", str(review), "--out", str(tmp_path / "o")]) == 0
+
+
 def test_command_writes_deterministic_files(files, tmp_path: Path) -> None:
     report, gold = files
     for out in ("o1", "o2"):

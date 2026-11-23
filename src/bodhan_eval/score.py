@@ -1,6 +1,7 @@
 """Scorecard: how a finished report does against gold labels, the way a hidden test would score it.
 
-    python -m bodhan_eval.score --report outputs/demo --gold data/demo_gold.jsonl [--exclude data/demo_labels.jsonl]
+    python -m bodhan_eval.score --report outputs/demo --gold data/demo_gold.jsonl [--labels data/saksham_labels.jsonl] \
+        [--exclude data/demo_labels.jsonl]
 
 The harness never sees these labels: the run is blind, and this command compares its ``items.jsonl`` with the
 gold file afterwards. Matching is the same as in calibration (``calibrate.match_item``): a label is *detected*
@@ -8,6 +9,8 @@ when a flag of the same category group overlaps it (or, without spans, exists on
 the spans overlap, and the category is *correct* when the groups agree. Clean gold items (``labels: []``)
 measure false alarms; unlabelled ones are skipped. A gold item missing from the report counts as missed.
 
+``--labels`` (repeatable) reads ``id`` + ``lang`` + ``labels`` lines, e.g. a human review: they replace the gold
+labels of the items they name, so reviewed items the gold file left unlabelled are scored too.
 ``--exclude`` drops the items used to calibrate the run (any JSONL with ``id`` and ``lang``), so the scores
 are out of sample. Outputs ``scorecard.json`` and ``scorecard.md`` (deterministic).
 """
@@ -25,7 +28,7 @@ from typing import Any
 from . import report
 from .calibrate import evaluate, match_item
 from .cli import setup_logging
-from .dataset import load_dataset
+from .dataset import apply_calibration_file, load_dataset
 from .models import Flag, ItemResult
 
 log = logging.getLogger("bodhan_eval.score")
@@ -61,9 +64,16 @@ def _ratio(a: int, b: int) -> float | None:
     return round(a / b, 4) if b else None
 
 
-def score(report_dir: Path, gold: Path, exclude: Path | None = None) -> dict[str, Any]:
+def score(
+    report_dir: Path, gold: Path, exclude: Path | None = None, labels: list[Path] | None = None
+) -> dict[str, Any]:
     reported = {(r["id"], r["lang"]): r for r in _read_jsonl(report_dir / "items.jsonl")}
-    gold_items, _ = load_dataset(gold, None)
+    gold_items, rep = load_dataset(gold, None)
+    before = len(rep.notes)
+    for path in labels or []:
+        apply_calibration_file(path, gold_items, None, rep, "translation")
+    for note in rep.notes[before:]:  # a label line that matched no gold item
+        log.warning("labels: %s: %s", note["item"], note["reason"])
     skip: set[tuple[str, str | None]] = set()
     if exclude is not None:
         skip = {(str(r["id"]), r.get("lang")) for r in _read_jsonl(exclude) if "id" in r}
@@ -197,6 +207,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="python -m bodhan_eval.score", description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument("--report", type=Path, required=True, help="a run's output folder (reads items.jsonl)")
     ap.add_argument("--gold", type=Path, required=True, help="JSONL with the gold labels (labels: [] = clean)")
+    ap.add_argument("--labels", type=Path, action="append", help="id + lang + labels lines replacing gold labels")
     ap.add_argument("--exclude", type=Path, help="JSONL of items to leave out (e.g. the calibration subset)")
     ap.add_argument("--out", type=Path, help="where to write scorecard.json/.md (default: --report)")
     ap.add_argument("--log-level", choices=("debug", "info", "warning", "error"), default="info")
@@ -210,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         log.error("no items.jsonl in %s: run the harness first", args.report)
         return 1
     try:
-        card = score(args.report, args.gold, args.exclude)
+        card = score(args.report, args.gold, args.exclude, args.labels)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError) as e:
         log.error("cannot score: %s: %s", type(e).__name__, e)
         return 1
