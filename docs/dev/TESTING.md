@@ -40,7 +40,9 @@ Each row is a separate parametrised test case with a readable id.
 - Translate 200 / 413 (split and rejoin) / 429 with `retry-after` / 500 then success / retries exhausted → `BodhanError`; `truncated: true` recorded.
 - TTS 422 → not retried, error recorded; WAV returned and cached as blob.
 - ASR: >30 s audio is chunked (assert each request ≤ 30 s).
-- LLM: `json_schema` rejected → falls back to `json_object` → falls back to plain; empty content → retry with more tokens; non-JSON → `None` handled.
+- LLM: `json_schema` rejected → falls back to `json_object` → falls back to plain; empty content → retry with more tokens; non-JSON → `None` handled. (`tests/unit/test_clients.py`: per-model format memory, an unrelated 400 lowers nothing, extra body, provider cost, cache tag, cached format.)
+- Concurrency and retries (`tests/unit/test_concurrency.py`), each scenario run for both the Bodhan and the LLM client: a 429 halves the limit and successes restore it; a burst of 429s from one window halves once; `Retry-After` honoured and capped; 5xx backs off with jitter without halving; retries exhausted cleanly (no reservation left, no spend); retries never double-count cost; the SDK sends exactly one request per attempt.
+- Judge (`tests/unit/test_judge.py`): the §2 parsing table; tie-break replica only on disagreement; minority finding → review queue; jury; repeat sample (identical request, no extra evidence); windows map indices back; replicas never see each other's verdicts. Bake-off (`tests/unit/test_bakeoff.py`): estimate, refusal before any call, table, byte-identical cached rerun, stop at `--max-usd`.
 - Missing keys → `ServiceUnavailable` → checks skipped, run continues.
 
 ## 5. End-to-end (offline, exact command)

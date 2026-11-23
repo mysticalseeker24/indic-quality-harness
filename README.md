@@ -33,6 +33,20 @@ python -m bodhan_eval \
   [--generate] [--baseline ./previous_report] [--calibration labels.jsonl] [--max-cost-inr 50]
 ```
 
+The judge works with any OpenAI-compatible endpoint (`LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`). Optional judge flags:
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--judge-replicas N` | 2 | re-ordered prompts per item |
+| `--judge-max-replicas N` | 3 | extra replicas allowed when the first ones disagree (tie-break) |
+| `--judge-models a,b,c` | `LLM_MODEL` | jury on the same endpoint; each model votes once |
+| `--judge-repeat-sample X` | 0.1 | share of items whose first prompt is re-sent unchanged (repeat-consistency) |
+| `--llm-extra-body JSON` | none | provider-specific fields, e.g. `'{"reasoning": {"effort": "low"}}'` |
+| `--llm-inr-per-1k-tokens X` | 0 | LLM price, so `--max-cost-inr` covers the judge too |
+| `--no-judge` | | skip the judge |
+
+To compare judge models on labelled data: `python -m bodhan_eval.bakeoff --dataset labelled.jsonl --models a,b --out outputs/bakeoff --max-usd 5` (prints a cost estimate first and refuses above `--max-usd`).
+
 ## How it works
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the architecture diagram, the flow chart, every check, the judge rubric, calibration and how results combine into flags.

@@ -2,16 +2,34 @@
 
 Purpose: pick the development/demo judge model with evidence, and show the harness works across providers (Bodhan will run it with an LLM of their choice). All candidates are current models listed on OpenRouter in November 2026 — **re-check slugs and prices on openrouter.ai/models before running**; prices below are list prices seen on 23 Nov 2026 where known.
 
-## Panel
+## Panel (confirmed by Saksham, 23 Nov 2026; D33)
 
-| Slot | Model (slug to confirm) | List price in/out per 1M | Why |
-|---|---|---|---|
-| Frontier, closed | `openai/gpt-6.1-sol` | $2 / $10 | Newest GPT-6 Sol upgrade (Sep 2026), strong instruction following |
-| Frontier, closed | Anthropic Claude Sonnet 5.5 (or Opus 5.5 if affordable) | check | Strong rubric adherence; second closed vendor |
-| Frontier, closed | Google Gemini 4 Argon, or `~google/gemini-pro-latest` | Pro latest: $2 / $12 | Gemini is strong on Indic scripts; third vendor |
-| Fast, closed | GPT-6 Luna or Gemini 3.8 Flash | low | Cheap candidates for the default |
-| Open weights | DeepSeek V4.1 Flash; Kimi K3.1 Pro | low | Most-used open models right now; shows provider-neutrality |
-| Deliberately weak | a small open model | very low | Simulates a cheap grader LLM; harness must degrade gracefully |
+Prices from OpenRouter's `/api/v1/models` listing on 23 Nov 2026. Requests use the plain `id`; the rankings page shows the dated `canonical_slug`. All eight list `structured_outputs` (strict `json_schema`) and `reasoning`.
+
+| Slot | Model id | Canonical slug | List $ in / out per 1M | Est. $ for 50 items (500–1,000 output tokens/call) | Why |
+|---|---|---|---|---|---|
+| Frontier, closed | `openai/gpt-6.2-sol` | `-20261117` | 2 / 10 | 0.90–1.50 | Newest GPT-6 Sol (17 Nov), same price as 6.1 |
+| Frontier, closed | `anthropic/claude-sonnet-5.5` | `-20260928` | 2 / 10 | 0.90–1.50 | Strong rubric adherence; second closed vendor |
+| Frontier, closed | `google/gemini-4-hydrogen` | `-20261112` | 1.5 / 7.5 | 0.67–1.12 | Gemini is strong on Indic scripts; third vendor |
+| Frontier, closed | `google/gemini-4-neon` | `-20261118` | 3 / 15 | 1.35–2.25 | Newest Gemini 4; the top of the Gemini range |
+| Fast, closed | `openai/gpt-6-luna` | `-20260922` | 0.10 / 0.50 | 0.05–0.08 | Cheap default candidate; interim judge until the bake-off |
+| Open weights | `deepseek/deepseek-v4.1-flash` | `-20260910` | 0.05 / 0.199 | 0.02–0.03 | Most-used open model; provider-neutrality |
+| Open weights | `moonshotai/kimi-k3.1-pro` | `-20261023` | 0.24 / 8.40 | 0.54–1.04 | Second open family (expensive output) |
+| Deliberately weak | `meta-llama/llama-3.1-8b-instruct` | — | 0.02 / 0.04 | ≈ 0.01 | Simulates a cheap grader LLM; harness must degrade gracefully |
+
+Estimate (the tool's own estimator on 50 proxy paragraphs of ~55 words; 2 replicas + 15 % tie-breaks + 10 % repeats = 120 calls/model): **$4.4 at 500 output tokens/call, $7.5 at 1,000**. Real charges can exceed list price (OpenRouter picks among providers; DeepSeek was billed 2.8× list in the mini run), so run with `--max-usd 8` and consider `--llm-extra-body '{"reasoning": {"effort": "low"}, "provider": {"sort": "price"}}'`. The tool stops taking items when the real spend reaches the cap.
+
+## Status
+
+- **P3 gate (23 Nov): mini bake-off** on the 5 live-smoke items (1 injected number error), Luna and DeepSeek V4.1 Flash, reasoning effort low. It proves the tool end to end on the real API; with one error it does not rank models.
+
+| Model | Judge-alone P / R | Order consistency | Repeat consistency | Invalid output | Tokens/item | $/100 items (list) | Harness recall / false alarms | Format |
+|---|---|---:|---:|---:|---:|---:|---|---|
+| `openai/gpt-6-luna` | 100 % / 100 % | 100 % | 100 % (n=2) | 0 % | 2492 | 0.027 | 100 % / 0 % | json_schema |
+| `deepseek/deepseek-v4.1-flash` | 100 % / 100 % | 100 % | 100 % (n=2) | 0 % | 2567 | 0.017 | 100 % / 0 % | json_schema |
+
+  Spend: Luna $0 (all answers cached from the smoke run, which cost $0.0014 as reported by OpenRouter), DeepSeek $0.0025 reported ($0.0009 at list price).
+- **Full run: after P5**, when the injector and Saksham's labels give the labelled set below (DATASET_PLAN step 5). Show the estimate on the real set again before running.
 
 ## Budget arithmetic
 
@@ -25,7 +43,7 @@ A judge call ≈ 2,500 input tokens (rubric + numbered tokens + back-translation
 ## Procedure
 
 1. Build the labelled bake-off set: 40 items (≈13 per hi/ta/bn) + 10 items in one held-out language, ~half clean, errors across all 7 translation categories (from the injector plus Saksham's own labels).
-2. `python -m bodhan_eval.bakeoff --dataset data/bakeoff.jsonl --models <slug1>,<slug2>,... --replicas 2 --max-usd 4.5 --out outputs/bakeoff` (tool built in P3; it runs tiers 0–1 once — shared via cache — then only the judge per model).
+2. `python -m bodhan_eval.bakeoff --dataset data/bakeoff.jsonl --models openai/gpt-6.2-sol,anthropic/claude-sonnet-5.5,google/gemini-4-hydrogen,google/gemini-4-neon,openai/gpt-6-luna,deepseek/deepseek-v4.1-flash,moonshotai/kimi-k3.1-pro,meta-llama/llama-3.1-8b-instruct --max-usd 8 --llm-extra-body '{"reasoning": {"effort": "low"}}' --out outputs/bakeoff` (add `--dry-run` first to see the estimate). It runs tiers 0–1 once — shared via cache — then only the judge per model; prices come from the OpenRouter listing unless `--price model=IN/OUT` is given.
 3. Table to produce (goes into README and the PR):
 
 | Model | Judge-alone P / R per category | Order consistency | Repeat consistency | Invalid output % | Tokens/item | $/100 items | Harness recall / false alarms with this judge |
