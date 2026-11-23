@@ -48,9 +48,10 @@
     "models": []
   },
   "clients": {
-    "_comment": "Retry and concurrency policy shared by the Bodhan and LLM clients (K11). Back-off is retry_base_s * 2^attempt with jitter; a Retry-After header is honoured up to retry_max_wait_s; after aimd_increase_after consecutive successes a service's concurrency grows by one (it halves on HTTP 429).",
+    "_comment": "Retry and concurrency policy shared by the Bodhan and LLM clients (K11, D43). Back-off is retry_base_s * 2^attempt with jitter; a Retry-After header is honoured up to retry_max_wait_s and pauses the whole service; after aimd_increase_after consecutive successes a service's concurrency grows by one (it halves on HTTP 429). A call keeps waiting out HTTP 429 for up to rate_limit_patience_s after its first one (15 min: the 23 Nov clean run saw Retry-After of 8-58 s for minutes at a time); errors (5xx, timeouts) still stop after max_retries attempts.",
     "retry_base_s": 1.5,
     "retry_max_wait_s": 60,
+    "rate_limit_patience_s": 900,
     "aimd_increase_after": 20
   },
   "costs_inr": {

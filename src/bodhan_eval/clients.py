@@ -89,6 +89,7 @@ class _Retryable(Exception):
 
 
 _sleep = time.sleep  # the only place a back-off waits (tests record the waits instead of sleeping)
+_now = time.monotonic  # the only clock the retry policy reads (tests move a fake clock in their _sleep)
 
 
 def _retry_after(value: str | None) -> float | None:
@@ -110,6 +111,9 @@ class AdaptiveLimiter:
     same congestion event, so they do not halve again (six parallel 429s: 8 -> 4, not 8 -> 1). Every request
     records the window ("generation") it started in for that purpose. A 5xx, timeout or connection error
     breaks the success streak but does not halve: it says nothing about our request rate.
+
+    * Pause (D43): a 429's Retry-After holds every new request to the service, not only the retry of the
+      request that got it. Otherwise the other workers keep sending into the same limit, each earning a 429.
     """
 
     def __init__(self, name: str, max_limit: int, increase_after: int):
@@ -120,16 +124,27 @@ class AdaptiveLimiter:
         self.in_flight = 0
         self.streak = 0
         self.generation = 0
+        self.paused_until = 0.0  # on the _now() clock
         self._cond = threading.Condition()
+
+    def pause(self, seconds: float) -> None:
+        """Start no new request for ``seconds`` (a longer pause already running is kept)."""
+        with self._cond:
+            self.paused_until = max(self.paused_until, _now() + seconds)
 
     @contextmanager
     def slot(self) -> Iterator[int]:
-        """Wait for a free slot; yields the generation the request starts in."""
-        with self._cond:
-            while self.in_flight >= self.limit:
-                self._cond.wait()
-            self.in_flight += 1
-            ticket = self.generation
+        """Wait for a free slot and the end of any pause; yields the generation the request starts in."""
+        while True:
+            with self._cond:
+                while self.in_flight >= self.limit:
+                    self._cond.wait()
+                wait = self.paused_until - _now()
+                if wait <= 0:
+                    self.in_flight += 1
+                    ticket = self.generation
+                    break
+            _sleep(wait)  # outside the lock; the pause may have grown meanwhile, so check again
         try:
             yield ticket
         finally:
@@ -159,16 +174,21 @@ class AdaptiveLimiter:
 def call_with_retries(
     fn: Callable[[], T], limiter: AdaptiveLimiter, s: Settings, what: str, error: type[ApiError]
 ) -> T:
-    """Run one attempt per concurrency slot, up to ``s.max_retries`` attempts. Same policy for Bodhan and the LLM.
+    """Run one attempt per concurrency slot until it succeeds or the retry policy gives up. Same for Bodhan and the LLM.
 
-    429: the limiter halves, then wait ``Retry-After`` (capped) or back off. 5xx / 408 / 409 / timeout /
-    connection error: back off without halving. Back-off is exponential with jitter: base * 2^i, scaled
-    into [50 %, 100 %] so parallel workers do not retry in lockstep. The slot is released while waiting.
-    Any other error is raised at once. Budget is reserved by the caller once per logical call, so retries
-    (which are not billed) never count twice.
+    429 (rate limited) is the server asking us to slow down, not a failure (D43): the limiter halves and the
+    whole service pauses for ``Retry-After`` (capped) or the back-off, and the call tries again. It gives up
+    only when waiting would end more than ``s.rate_limit_patience_s`` after its first 429; a check that gives
+    up loses its result for the item, so patience is cheaper than a silent gap in the report.
+    5xx / 408 / 409 / timeout / connection error: back off (this worker only) without halving, up to
+    ``s.max_retries`` attempts. Back-off is exponential with jitter: base * 2^i, scaled into [50 %, 100 %] so
+    parallel workers do not retry in lockstep. The slot is released while waiting. Any other error is raised
+    at once. Budget is reserved by the caller once per logical call, so retries (not billed) never count twice.
     """
     attempts = max(1, s.max_retries)
-    for i in range(attempts):
+    failures, limited = 0, 0
+    first_429: float | None = None
+    while True:
         try:
             with limiter.slot() as ticket:
                 try:
@@ -179,15 +199,31 @@ def call_with_retries(
             limiter.success()
             return value
         except _Retryable as e:
-            if i == attempts - 1:
+            if e.rate_limited:
+                wait = _back_off(s, e.retry_after, limited)
+                limited += 1
+                now = _now()
+                first_429 = now if first_429 is None else first_429
+                if now + wait - first_429 > s.rate_limit_patience_s:
+                    raise error(
+                        0, "retries_exhausted", f"{what}: {e}; still rate limited after {now - first_429:.0f} s"
+                    ) from e
+                log.warning("%s rate limited (%s); %s paused for %.2fs", what, e, limiter.name, wait)
+                limiter.pause(wait)  # the next slot() waits it out, and so does every other worker
+                continue
+            failures += 1
+            if failures >= attempts:
                 raise error(0, "retries_exhausted", f"{what}: {e}") from e
-            if e.retry_after is not None:
-                wait = min(s.retry_max_wait_s, e.retry_after)
-            else:
-                wait = min(s.retry_max_wait_s, s.retry_base_s * 2**i) * (0.5 + random.random() / 2)
-            log.warning("%s failed (%s); retry %d/%d in %.2fs", what, e, i + 1, attempts - 1, wait)
+            wait = _back_off(s, e.retry_after, failures - 1)
+            log.warning("%s failed (%s); retry %d/%d in %.2fs", what, e, failures, attempts - 1, wait)
             _sleep(wait)
-    raise AssertionError("unreachable")
+
+
+def _back_off(s: Settings, retry_after: float | None, i: int) -> float:
+    """``Retry-After`` if the server sent one, else base * 2^i jittered into [50 %, 100 %]; capped either way."""
+    if retry_after is not None:
+        return min(s.retry_max_wait_s, retry_after)
+    return min(s.retry_max_wait_s, s.retry_base_s * 2**i) * (0.5 + random.random() / 2)
 
 
 def wav_duration_s(data: bytes) -> float:

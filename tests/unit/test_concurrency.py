@@ -72,6 +72,22 @@ def test_server_errors_reset_the_streak_but_do_not_halve() -> None:
     assert lim.limit == 3
 
 
+def test_a_pause_holds_every_new_request_of_the_service(waits: list[float]) -> None:
+    """One worker's 429 pauses the service: the others wait out the Retry-After instead of earning 429s too."""
+    lim = AdaptiveLimiter("transcribe", max_limit=4, increase_after=20)
+    lim.pause(8.0)
+    with lim.slot():
+        pass
+    assert waits == [8.0]
+    lim.pause(3.0)
+    lim.pause(1.0)  # a shorter pause does not cut a longer one short
+    with lim.slot():
+        pass
+    with lim.slot():  # the pause is over: no more waiting
+        pass
+    assert waits == [8.0, 3.0]
+
+
 def test_a_lowered_limit_blocks_new_requests_until_a_slot_frees() -> None:
     lim = AdaptiveLimiter("translate", max_limit=2, increase_after=20)
     with lim.slot() as t:
@@ -115,9 +131,19 @@ def cache(tmp_path: Path) -> Iterator[Cache]:
 
 @pytest.fixture
 def waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
-    """Record every back-off instead of sleeping (the retry helper sleeps through ``clients._sleep``)."""
+    """Record every wait instead of sleeping, on a fake clock that a wait moves forward.
+
+    The clients wait only through ``clients._sleep`` and read the time only through ``clients._now``.
+    """
     seen: list[float] = []
-    monkeypatch.setattr(clients, "_sleep", seen.append)
+    clock = [1000.0]
+
+    def sleep(seconds: float) -> None:
+        seen.append(round(seconds, 6))
+        clock[0] += seconds
+
+    monkeypatch.setattr(clients, "_sleep", sleep)
+    monkeypatch.setattr(clients, "_now", lambda: clock[0])
     return seen
 
 
@@ -202,6 +228,31 @@ def test_retries_exhausted_cleanly(kind: str, stub: StubServer, cache: Cache, wa
 
 
 @KINDS
+def test_rate_limiting_is_waited_out_beyond_max_retries(
+    kind: str, stub: StubServer, cache: Cache, waits: list[float]
+) -> None:
+    """429 asks us to slow down; it is not a failure. Only errors count against ``max_retries``."""
+    _, lim, call = make(kind, stub, cache, max_retries=3)
+    stub.add_fault(FAULT_PATH[kind], 429, times=5, retry_after="20")
+    call(0)
+    assert [r["status"] for r in stub.requests] == [429] * 5 + [200]
+    assert waits == [20.0] * 5 and lim.in_flight == 0
+
+
+@KINDS
+def test_rate_limited_past_the_patience_gives_up(kind: str, stub: StubServer, cache: Cache, waits: list[float]) -> None:
+    budget = Budget(5.0)
+    _, lim, call = make(kind, stub, cache, budget, rate_limit_patience_s=50.0)
+    stub.add_fault(FAULT_PATH[kind], 429, times=-1, retry_after="20")
+    with pytest.raises(ApiError) as err:
+        call(0)
+    assert err.value.code == "retries_exhausted" and "rate limited" in str(err.value)
+    assert len(stub.requests) == 3  # 429 at 0 s and 20 s; the one at 40 s would need waiting until 60 s > 50 s
+    assert waits == [20.0, 20.0]
+    assert budget.reserved == 0.0 and budget.total_spent == 0.0 and lim.in_flight == 0
+
+
+@KINDS
 def test_retries_do_not_double_count_cost(kind: str, stub: StubServer, cache: Cache, waits: list[float]) -> None:
     budget = Budget(None)
     _, _, call = make(kind, stub, cache, budget)
@@ -212,9 +263,9 @@ def test_retries_do_not_double_count_cost(kind: str, stub: StubServer, cache: Ca
 
 
 def test_llm_sdk_retries_are_off(stub: StubServer, cache: Cache, waits: list[float]) -> None:
-    """One attempt allowed: a 429 must surface after exactly one request (the SDK would otherwise retry it)."""
-    _, _, call = make("llm", stub, cache, max_retries=1)
-    stub.add_fault("/chat/completions", 429, times=1, retry_after="0")
+    """No patience for 429s: one must surface after exactly one request (the SDK would otherwise retry it)."""
+    _, _, call = make("llm", stub, cache, max_retries=1, rate_limit_patience_s=0.0)
+    stub.add_fault("/chat/completions", 429, times=1, retry_after="1")
     with pytest.raises(ApiError) as err:
         call(0)
     assert err.value.code == "retries_exhausted"

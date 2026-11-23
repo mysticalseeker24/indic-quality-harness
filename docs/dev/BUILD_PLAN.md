@@ -13,7 +13,7 @@ Legend: ✅ draft written and smoke-tested · 🟡 draft with known issues (see 
 | `data/langs.json`, `taxonomy.json`, `defaults.json`, `judge_rubric.md` | ✅ | Language registry, label aliases, generic thresholds, judge rubric |
 | `config.py`, `models.py` | ✅ | Settings from env; `Item`, `Signal`, `Flag`, `ItemResult` |
 | `cache.py`, `budget.py` | ✅ | SQLite content-addressed cache; reserve-before-spend budget |
-| `clients.py` | ✅ | Bodhan + LLM clients; chat-transport fallback (D24); response-format chain, extra body, empty-answer retry, provider cost (K1, D35); AIMD limits and one retry policy (K11, D34) |
+| `clients.py` | ✅ | Bodhan + LLM clients; chat-transport fallback (D24); response-format chain, extra body, empty-answer retry, provider cost (K1, D35); AIMD limits and one retry policy (K11, D34); 429 pauses the service and is waited out (D43) |
 | `normalize.py`, `spans.py`, `markup.py` | ✅ | Offset-preserving normalisation, span maths, Markdown/LaTeX parsing |
 | `checks/deterministic.py` | ✅ | script/language, format, length, reference; tables pass (P2) |
 | `checks/roundtrip.py` | ✅ | back-translation + DP alignment, numbers, entities, term consistency; K3, K6 fixed and tables pass (P2) |
