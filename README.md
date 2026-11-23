@@ -99,7 +99,21 @@ The demo's real-error labels come from that review (marked `ai-review`), so they
 
 Every model answered in strict `json_schema`. Tested with Kimi K3.1 Pro (reasoning effort low); the harness runs with any OpenAI-compatible model.
 
-**Independent blind exam:** EXAM_RESULTS
+**Independent blind exam.** An independent exam built in a separate project (only Bodhan models, never seen by this repo or tuned on): 146 items in 6 languages (hi, ta, bn, and te, mr, gu; **Gujarati never demoed**), 98 with audio, about half clean, plus a 20-item calibration file. Run **once**, judge Kimi K3.1 Pro, numbers as they came out:
+
+| Measure | Value |
+|---|---|
+| Labelled errors caught | **91.6 %** (83 labels; items with an error: 96 %) |
+| False alarms on clean items | **4.2 %** (3 of 71) |
+| Precision / localisation / category correct | 81.5 % / 93.4 % / 98.7 % |
+| By severity | critical 10 / 10, major 94 %, minor 82 % |
+| Per language (recall / false alarms) | hi 92 / 0 %, ta 86 / 9 %, bn 93 / 0 %, te 100 / 9 %, mr 86 / 8 %, **gu 93 / 0 %** |
+| Text categories (addition, mistranslation, number, omission, term, wrong_language) | 100 % caught; format 93 % |
+| Speech | omission 6 / 7, garbled 5 / 7, repetition 3 / 6 |
+| Cost / runtime | ₹3.83 Bodhan + $1.24 judge; 37.6 min for 166 items (shared the transcription quota with another run) |
+
+Weakest spots, as measured: speech repetition and garbled speech (the transcriber smooths some of them over), and precision of number flags (57 %).
+
 
 **Voices** (`python -m bodhan_eval.voices`, 15 demo texts per language, every voice speaks the same text, ₹11.8; [sample_report/voices.md](sample_report/voices.md)): the two voices of each language get flagged on the same items (paired difference at most 1 item: hi Kavya/Amit 3/3, ta Anitha/Arun 5/4, bn Ishita/Sourav 3/2), with transcript CER within 3 points; Arun speaks fastest (16.5 characters/s against about 13.5). The speech errors come from the text front end (brackets, numbers), not from the voice.
 
@@ -123,7 +137,7 @@ DEMO_VIDEO
 
 ## Cost and runtime
 
-Per 100 items, checking only (no `--generate`): about **₹8 with speech checks** (transcription ₹7.6, back-translation ₹0.2) and **₹0.2 without**, plus the judge: about **$0.34** with Kimi K3.1 Pro ($0.06 with GPT-6 Luna). Generating the outputs costs extra (speech synthesis ≈ ₹23 per 100 items of ~400 characters). Runtime is bound by Bodhan's rate limits, which the harness waits out instead of dropping checks (D43): RUNTIME_LINE. Reruns from the cache take seconds and cost nothing.
+Per 100 items, checking only (no `--generate`): about **₹8 with speech checks** (transcription ₹7.6, back-translation ₹0.2) and **₹0.2 without**, plus the judge: about **$0.34** with Kimi K3.1 Pro ($0.06 with GPT-6 Luna). Generating the outputs costs extra (speech synthesis ≈ ₹23 per 100 items of ~400 characters). Runtime is bound by Bodhan's rate limits, which the harness waits out instead of dropping checks (D43): 146 exam items plus 20 calibration items (98 with audio) took 37.6 min while another run shared the transcription quota; the time is Bodhan's rate limits (HTTP 429 waits), not computation: the 180-item demo re-run from cache takes about 3 min with fresh judge calls and 12 s without. Reruns from the cache take seconds and cost nothing.
 
 ## AI assistance
 
