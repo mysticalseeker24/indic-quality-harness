@@ -4,7 +4,7 @@
 
 - The Cookbook squash-merges, so commit history in the PR has no lasting value there; your full history stays public in this repo, linked from the PR.
 - A snapshot exports **only tracked files at one commit**, so nothing that ever passed through history (an early test file, a large audio file, a key committed by mistake and later removed) can leak into a public PR.
-- `.gitattributes` `export-ignore` keeps personal-repo-only files out (`.github/`, `CLAUDE.md`, `docs/dev/`).
+- `.gitattributes` `export-ignore` keeps personal-repo-only files out (`.github/`, `CLAUDE.md`, `docs/dev/`, and `.gitattributes` itself, which names them) (D30).
 - The PR description records this repo's commit SHA for traceability.
 
 ## Steps

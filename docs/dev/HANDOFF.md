@@ -13,19 +13,18 @@ Every Claude Code session reads this first and rewrites "Current state" at each 
   - **Live API finding (D24):** hosted `/translate` and `/transliterate` answer 404; the documented chat transport works. Clients fall back automatically (verified live). Keys are scoped per model (API_NOTES).
   - Secrets: `.env` filled by Saksham (Bodhan translate/speak/transcribe/transliterate keys, OpenRouter key; `LLM_MODEL` empty until the P3 bake-off). `tests/unit/test_repo_hygiene.py` fails `make check` if `.env` is tracked or any repo file holds a value from it or a key-shaped string.
   - **D29 (after the gate, Saksham's yes):** optional `BODHAN_TRANSLITERATE_KEY`, falling back to `BODHAN_API_KEY`, then the translate key. A key refused with 401/403 is not sent again in the run (live: the translate key gets 403 on `indic-transliterate`; the own key works). Transliteration spend stays on the `translate` cost line.
+  - **Saksham's answers (23 Nov):** D26 acked (entity threshold 85). D30: `CLAUDE.md` and `docs/dev/` stay tracked; `.gitattributes` now export-ignores itself, so `git archive` ships none of the private files (checked). D31: README "AI assistance" written, because SPEC asks for it (tools and what for); commits stay attribution-free (D23).
   - `make check`: ruff and mypy clean, **321 tests pass** (~20 s).
 - **Paid usage so far:** Bodhan ≈ ₹0.01 of ₹200 (key probe, one live fallback check, one live transliteration) · OpenRouter $0 (key limit shows 50).
 - **Environment (Windows 11):** `.venv` on Python 3.13.9 (CI runs 3.10 and 3.12); GNU make from winget. In PowerShell put `.venv\Scripts` and `%LOCALAPPDATA%\Microsoft\WinGet\Links` on PATH before `make`. PowerShell 5.1 drops empty-string arguments to native commands: use bash for those. Repo git config: `core.autocrlf=false`, GitHub credentials via `gh auth git-credential` (repo-local). `.claude/` is ignored via `.git/info/exclude`.
-- **Git:** `main`. Commit messages are plain conventional commits, no attribution trailers (D23). Push in batches of ≥5 commits. Everything up to the D29 commit is pushed.
+- **Git:** `main`. Commit messages are plain conventional commits, no attribution trailers (D23). Push in batches of ≥5 commits. Pushed up to the D29 commit (885be30); **3 commits not pushed yet** (export fix, README note, this checkpoint), they go out with the next batch.
 - **Exam project:** reminded at the Phase 1 gate; status unknown here.
 - **Repo visibility:** private (make public before export — CLAUDE.md §3).
 
 ## Open questions for Saksham
 
-1. **Ack D26:** `entity_match_similarity` raised 72 -> 85 (a default in `defaults.json`, changed as a Phase 2 table fix).
-2. **Before the repo goes public:** `.gitattributes` exports itself and names `CLAUDE.md`; README "AI assistance" wording (the spec asks for a brief note); keep `CLAUDE.md` and `docs/dev/` tracked or not.
-3. setuptools warns that the `project.license` TOML table is deprecated (removal 2027-02-18). `license = "Apache-2.0"` needs `setuptools>=77`.
-4. Security: the keys were pasted into a chat transcript; consider rotating them after the submission.
+1. setuptools warns that the `project.license` TOML table is deprecated (removal 2027-02-18). `license = "Apache-2.0"` needs `setuptools>=77` (a dependency change, so it needs a yes).
+2. Security: the keys were pasted into a chat transcript; consider rotating them after the submission.
 
 ## Known issues still open
 
@@ -56,4 +55,4 @@ Next up: Phase 3 — K1 and K11 test-first against the stub, then K2 and the jud
 |---|---|---|---|
 | 0 | 23 Nov 2026 | claude.ai | Design, research, drafts, starter pack, prompt playbook |
 | 1 | 23 Nov 2026 | coding session | Phase 1: K12/K4/K10, core unit tests, stub server, pipeline/CLI/report/diff, offline e2e + determinism; repo connected; commit history rewritten without trailers |
-| 1b | 23 Nov 2026 | coding session | Phase 2: K3/K6/K8, check tables, 4 table-driven fixes, clean false-alarm suite (0/20); .env + hygiene test; live probe found 404 text routes → chat-transport fallback; D29 transliterate key (live-verified) |
+| 1b | 23 Nov 2026 | coding session | Phase 2: K3/K6/K8, check tables, 4 table-driven fixes, clean false-alarm suite (0/20); .env + hygiene test; live probe found 404 text routes → chat-transport fallback; D29 transliterate key (live-verified); D26 acked; D30 export hygiene; D31 README AI note |
