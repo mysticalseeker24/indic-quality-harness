@@ -102,7 +102,7 @@ Every model answered in strict `json_schema`. Tested with Kimi K3.1 Pro (reasoni
 
 ## Sample report
 
-[`sample_report/`](sample_report/) holds the demo run's text outputs: `summary.md`, `summary.json`, `calibration.json`, `scorecard.md`, `dashboard.html` (open it in a browser) and `items.jsonl`. Audio: AUDIO_LINK
+[`sample_report/`](sample_report/) holds the demo run's text outputs: `summary.md`, `summary.json`, `calibration.json`, `scorecard.md`, `dashboard.html` (open it in a browser) and `items.jsonl`. Audio (180 WAVs, 234 MB zipped; unzip at the repository root so the paths in `data/demo.jsonl` resolve): [release demo-audio-v1](https://github.com/mysticalseeker24/indic-quality-harness/releases/tag/demo-audio-v1).
 
 ## Demo video
 
