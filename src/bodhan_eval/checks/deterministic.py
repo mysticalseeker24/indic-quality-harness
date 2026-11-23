@@ -146,13 +146,19 @@ class ScriptCheck(Check):
                     severity="major",
                     span=(a, b),
                 )
-        # English runs inside otherwise-translated sentences
+        # English runs inside otherwise-translated sentences. A number or a kept name inside a run neither ends it
+        # nor counts as English: "The Ganga is 2,525 km long." left untranslated is one run of 4 English words.
         toks = word_tokens(tgt)
         run: list = []
         for t in toks + [None]:
             is_eng = t is not None and t.text.isascii() and t.text.isalpha() and not markup.in_spans(t.start, allowed)
             if is_eng:
                 run.append(t)
+                continue
+            neutral = t is not None and (
+                any(c.isdigit() for c in t.text) or (t.text.isascii() and markup.in_spans(t.start, allowed))
+            )
+            if neutral:
                 continue
             if len(run) >= min_words and sum(x.text.lower() in STOPWORDS for x in run) >= 2:
                 span = (run[0].start, run[-1].end)

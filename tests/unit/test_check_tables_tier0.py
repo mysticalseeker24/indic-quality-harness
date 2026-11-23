@@ -29,6 +29,9 @@ SCRIPT_CATCH = [
     pytest.param("as", "Water boils at 100 degrees and makes steam. Heat is needed for this.",
                  "জল সমুদ্রপৃষ্ঠে ১০০ ডিগ্রিতে ফোটে এবং বাষ্প তৈরি করে। এর জন্য তাপ লাগে।",
                  "জল", id="bengali-text-for-assamese"),
+    pytest.param("hi", "The Ganga is 2,525 km long. It is the longest river in India.",
+                 "The Ganga is 2,525 km long. यह भारत की सबसे लंबी नदी है।",
+                 "The Ganga is 2,525 km long", id="short-english-sentence-with-name-and-number"),
 ]  # fmt: skip
 
 SCRIPT_CLEAN = [
@@ -40,6 +43,11 @@ SCRIPT_CLEAN = [
                  "$E = mc^2$ का उपयोग करें और `print(x)` चलाएँ; विवरण के लिए https://example.org/energy देखें।",
                  id="latex-code-url"),
     pytest.param("hi", "This software is free to use.", "यह software उपयोग के लिए मुफ़्त है।", id="single-kept-technical-word"),
+    pytest.param("hi", "This mobile phone runs very fast on a 5G network and its battery lasts the whole day.",
+                 "यह mobile phone 5 G network पर बहुत तेज़ी से चलता है और इसकी बैटरी पूरे दिन चलती है।",
+                 id="english-words-around-a-number-without-function-words"),
+    pytest.param("hi", "Isaac Newton wrote Principia Mathematica in 1687.",
+                 "Isaac Newton ने 1687 में Principia Mathematica लिखी।", id="kept-names-and-a-year"),
     pytest.param("ta", "The sun rises in the east.", "சூரியன் கிழக்கில் உதிக்கிறது.", id="correct-tamil"),
     pytest.param("bn", "Water boils at 100 degrees and makes steam.", "জল ১০০ ডিগ্রিতে ফোটে এবং বাষ্প তৈরি করে।", id="correct-bengali"),
     pytest.param("mr", "Water boils at 100 degrees and it is hot.", "पाणी 100 अंशांवर उकळते आणि ते गरम आहे.", id="correct-marathi"),
