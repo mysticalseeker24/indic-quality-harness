@@ -13,8 +13,7 @@ Input: a JSONL file of English sources with optional reference translations, sys
 ## Setup
 
 ```bash
-git clone https://github.com/mysticalseeker24/indic-quality-harness.git
-cd indic-quality-harness
+cd examples/translation_speech_quality_harness          # in the Cookbook; or clone github.com/mysticalseeker24/indic-quality-harness
 python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -r requirements.txt                       # pinned; or: make setup (adds test tools)
 cp .env.example .env                                  # Bodhan keys + judge LLM (any OpenAI-compatible endpoint)
@@ -58,7 +57,21 @@ Library: `from bodhan_eval.api import Harness; Harness(max_cost_inr=5).check_tra
 
 ## How it works
 
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the architecture diagram, the flow chart (which checks run in which order, and when the costly ones are triggered), every check, the judge rubric, calibration and how signals become flags. In one paragraph: checks emit *signals* (category, score, span, evidence); `fusion.py` clusters signals that point at the same place, combines them with noisy-OR, and compares the result with a per-category threshold (calibrated from labels when there are enough); only fusion creates flags. Weak hints (length outliers, a name not found) never flag alone; they add weight to the judge or the round trip.
+![System design](docs/images/architecture.svg)
+
+1. **Load** the JSONL: every line validated, bad lines counted (never fatal), language codes normalised; `--calibration` labels attached but never shown to the checks.
+2. **Generate** (only with `--generate`): missing translations with `indic-translate`; missing audio with `indic-speak` for the items a planner picks by risk per rupee under the budget. Speech is synthesised in chunks of at most 220 characters and transcribed in chunks of at most 29 s, so every audio request stays near Bodhan's 30-second guideline.
+3. **Pre-pass:** per-language length ratio and speaking rate from the data itself (median, MAD).
+4. **Tier 0 (free):** script / language, Markdown-table-LaTeX format, numbers, a length hint, reference chrF++ when given, waveform statistics.
+5. **Tier 1 (Bodhan round trips):** segment-wise back-translation with DP sentence alignment (omission, addition, drift; numbers and units); names via `indic-transliterate`; speech via `indic-transcribe` with word alignment, and a second transcription with different cuts only for omission and repetition candidates.
+6. **Tier 2 (LLM judge):** the rubric in `src/bodhan_eval/data/judge_rubric.md`; the translation shown as numbered tokens, answers as token indices (so the LLM never writes Indian-language text and every span is exact); two replicas with re-ordered prompts, a third only on disagreement.
+7. **Fusion:** signals that point at the same place are clustered and combined (noisy-OR) per category; above the category threshold a flag, near it the review queue, explained away a dismissal with its reason. Weak hints (length, a name not found) never flag alone.
+8. **Calibration** (with labels): precision, recall, false alarms, localisation and category accuracy per category and language; a threshold is tuned only with ≥5 labels, with 2-fold cross-validation next to the in-sample numbers.
+9. **Reports:** summary, items, calibration, dashboard, and with `--baseline` a diff (and an exit code for CI).
+
+![Flow from dataset to report](docs/images/flow.svg)
+
+Every check, the judge rubric, fusion and calibration in detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The blind exam: [docs/EXAM.md](docs/EXAM.md).
 
 ## Results
 
@@ -99,7 +112,7 @@ The demo's real-error labels come from that review (marked `ai-review`), so they
 
 Every model answered in strict `json_schema`. Tested with Kimi K3.1 Pro (reasoning effort low); the harness runs with any OpenAI-compatible model.
 
-**Independent blind exam.** An independent exam built in a separate project (only Bodhan models, never seen by this repo or tuned on): 146 items in 6 languages (hi, ta, bn, and te, mr, gu; **Gujarati never demoed**), 98 with audio, about half clean, plus a 20-item calibration file. Run **once**, judge Kimi K3.1 Pro, numbers as they came out:
+**Independent blind exam** (full write-up, protocol and every number: [docs/EXAM.md](docs/EXAM.md)). An independent exam built in a separate project (only Bodhan models, never seen by this repo or tuned on): 146 items in 6 languages (hi, ta, bn, and te, mr, gu; **Gujarati never demoed**), 98 with audio, about half clean, plus a 20-item calibration file. Run **once**, judge Kimi K3.1 Pro, numbers as they came out:
 
 | Measure | Value |
 |---|---|

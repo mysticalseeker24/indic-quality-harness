@@ -1,75 +1,14 @@
 # Architecture and design notes
 
-> Status: checks, fusion, calibration, pipeline, injector and scorecard are implemented and tested; reports get their final form in P6. Numbers in "Results" sections elsewhere come from real runs only.
+> Implemented and tested end to end; the numbers quoted in README.md and docs/EXAM.md come from real runs only.
 
 ## 1. Architecture
 
-```mermaid
-flowchart LR
-  subgraph Inputs
-    DS[(dataset.jsonl)]
-    CAL[(labels.jsonl)]
-    BASE[(baseline report)]
-  end
-  subgraph Clients["Model clients (cached, budgeted, retried)"]
-    TR[Indic-Translate<br/>/translate]
-    TL[Indic-Transliterate<br/>/transliterate]
-    SP[Indic-Speak<br/>/v1/audio/speech]
-    TX[Indic-Transcribe<br/>/v1/audio/transcriptions]
-    LLM[Judge LLM<br/>OpenAI-compatible]
-  end
-  CACHE[(SQLite cache<br/>key = sha256 of kind+model+params+input)]
-  BUDGET[[Budget meter<br/>reserve before spend]]
-  DS --> LOAD[Loader] --> GEN[Generator + speech planner<br/>--generate only]
-  GEN --> SP & TR
-  LOAD --> PRE[Pre-pass: per-language stats]
-  PRE --> T0[Tier 0 checks<br/>script · format · numbers · length · chrF++]
-  T0 --> T1[Tier 1 checks<br/>back-translation · entities]
-  T1 --> T2[Tier 2: LLM judge<br/>token-index spans, replicas]
-  PRE --> S0[Speech tier 0<br/>waveform stats]
-  S0 --> S1[Speech tier 1<br/>chunked ASR + alignment + second opinion]
-  T1 --> TR & TL
-  T2 --> LLM
-  S1 --> TX
-  T0 & T1 & T2 & S0 & S1 --> SIG[(Signals)]
-  SIG --> FUS[Fusion<br/>cluster · noisy-OR · thresholds]
-  CAL --> CALB[Calibration<br/>P/R per category, threshold tuning, 2-fold CV]
-  FUS <--> CALB
-  FUS --> REP[Reports<br/>summary · items · calibration · diff · extras]
-  BASE --> REP
-  Clients --- CACHE
-  Clients --- BUDGET
-```
+![System design: inputs, checks by tier, fusion and calibration, outputs, shared services](images/architecture.svg)
 
 ## 2. Flow and when costly checks run
 
-```mermaid
-flowchart TD
-  A[Read JSONL] --> B{valid line?}
-  B -- no --> B1[log + count as bad, continue]
-  B -- yes --> C{lang in --langs?}
-  C -- no --> C1[count as filtered]
-  C -- yes --> D{translation present?}
-  D -- no, --generate --> D1[Indic-Translate source → target]
-  D -- no --> D2[translation checks skipped, counted]
-  D -- yes --> E
-  D1 --> E[Tier 0: script, format, numbers, length, chrF++ if reference]
-  E --> F[Tier 1: back-translate each segment → align → omission/addition/drift; numbers via BT; entities via transliteration]
-  F --> G{LLM configured?}
-  G -- yes --> H[Judge ×2 re-ordered prompts; 3rd only if they disagree]
-  G -- no --> I
-  H --> I{audio present?}
-  I -- no, --generate and planner selects it --> I1[Indic-Speak per sentence chunk ≤220 chars → WAV]
-  I -- no --> K
-  I -- yes --> J
-  I1 --> J[Waveform stats: silence, clipping, noise, duration vs rate]
-  J --> J1[Indic-Transcribe ~10 s chunks cut at pauses, ≤29 s → word alignment]
-  J1 --> J2{omission/repetition candidate?}
-  J2 -- yes --> J3[Second-opinion transcription with different chunking]
-  J2 -- no --> K
-  J3 --> K[Fusion → flags / review queue]
-  K --> L[Calibration if labels] --> M[Reports + diff]
-```
+![Flow from dataset to report, and when costly checks run](images/flow.svg)
 
 Cost ladder: tier 0 is free; back-translation and transliteration cost fractions of a paisa per item; the judge costs LLM tokens (we pay only for the 2nd/3rd opinion where needed); speech synthesis is the expensive step, so the planner selects items by risk score per rupee under the budget, stratified by language; transcription is cheap, and the second opinion runs only for candidates.
 

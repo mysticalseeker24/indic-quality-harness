@@ -1,5 +1,9 @@
 ## Summary
 
+**Type:** new recipe
+**Path:** `examples/translation_speech_quality_harness/`
+**Bodhan models used:** indic-translate, indic-transliterate, indic-speak, indic-transcribe
+
 A quality harness for Bodhan's **Indic-Translate** and **Indic-Speak** outputs: it finds, localises (character spans in the translation or the source), grades (minor / major / critical) and explains errors in translations and speech, calibrates itself against human labels, compares runs (with a CI gate), and works on languages it has never seen. One command, one report folder; every flag traces back to its evidence. Full source and history: https://github.com/mysticalseeker24/indic-quality-harness (snapshot of commit `SRC_SHA`).
 
 ## How to run
@@ -13,6 +17,10 @@ python -m bodhan_eval --dataset data/demo.jsonl --langs hi,ta,bn --out ./report 
 Or `docker build -t bodhan-eval . && docker run --env-file .env -v "$PWD:/work" bodhan-eval --dataset /work/data/demo.jsonl --langs hi,ta,bn --out /work/report`. `make check` runs lint, types and the test suite with no keys. Demo audio: release `demo-audio-v1` (unzip at the recipe root).
 
 ## Architecture
+
+![System design](https://github.com/mysticalseeker24/indic-quality-harness/blob/main/docs/images/architecture.svg?raw=true)
+
+![Flow from dataset to report](https://github.com/mysticalseeker24/indic-quality-harness/blob/main/docs/images/flow.svg?raw=true)
 
 Mermaid architecture diagram and flow chart in `docs/ARCHITECTURE.md`: dataset → (optional `--generate`) → per-language pre-pass → per item, cheap to costly: tier 0 deterministic checks (script/language, Markdown/table/LaTeX format, length, reference chrF++, waveform stats) → tier 1 Bodhan round trips (segment-wise back-translation with DP alignment, numbers, names via Indic-Transliterate, chunked transcription with word alignment and a second opinion) → tier 2 LLM judge (token-index answers, re-ordered replicas) → fusion → calibration → reports. A content-addressed SQLite cache makes reruns free and byte-identical; a reserve-before-spend budget enforces `--max-cost-inr`; adaptive per-service concurrency waits out rate limits instead of dropping checks.
 
@@ -32,6 +40,8 @@ Only as the tier-2 judge, for meaning errors that rules and round trips cannot s
 `indic-translate` (generation and back-translation), `indic-transliterate` (names), `indic-speak` (generation, voice comparison), `indic-transcribe` (speech checks). No other MT/TTS/ASR, no learned quality-estimation model.
 
 ## Results
+
+Full exam write-up (how it was built and kept blind, exact commands, every number): [docs/EXAM.md](https://github.com/mysticalseeker24/indic-quality-harness/blob/main/docs/EXAM.md).
 
 **Independent blind exam** (built in a separate project with Bodhan models only; never seen by the harness repo; run once; judge Kimi K3.1 Pro): 146 items in hi, ta, bn, te, mr and **gu (never demoed)**, 98 with audio, about half clean.
 
@@ -77,5 +87,20 @@ Checking only, per 100 items: about ₹8 with speech checks (transcription domin
 
 - Design and research: Claude (claude.ai) helped read the assignment and the Bodhan docs, compare check designs, and draft the architecture, test plan and build plan.
 - Implementation: Claude Code wrote code and tests phase by phase against that plan; each phase ended at a gate (`make check` plus acceptance tests).
-- Review and labels: Claude Code reviewed the flags on the real Bodhan outputs against their evidence (marked `ai-review`).
 - Decisions: I approved every default, threshold and interface change, chose the judge, set the spending caps, and reviewed every change.
+
+## Screenshots / sample output
+
+- [`sample_report/summary.md`](https://github.com/mysticalseeker24/indic-quality-harness/blob/main/sample_report/summary.md), [`scorecard.md`](https://github.com/mysticalseeker24/indic-quality-harness/blob/main/sample_report/scorecard.md), [`voices.md`](https://github.com/mysticalseeker24/indic-quality-harness/blob/main/sample_report/voices.md) and `dashboard.html` (open locally) from the demo run.
+- Hosted demo audio: release [demo-audio-v1](https://github.com/mysticalseeker24/indic-quality-harness/releases/tag/demo-audio-v1).
+
+## Checklist
+
+- [x] I started from `examples/TEMPLATE/` (new recipes) and the folder matches the required layout
+- [x] `README.md` explains what the recipe does, how to set it up, and how to run it
+- [x] Dependencies are pinned (`name==version`) in `requirements.txt` / `package.json`
+- [x] `.env.example` lists every variable; **no real key anywhere in the diff**
+- [x] Notebook outputs are cleared (`make clean-outputs`) (no notebooks)
+- [x] Only current model ids from `scripts/bodhan_api_rules.json` are used
+- [x] `make check` passes locally
+- [x] I ran the recipe end to end against `https://api.bodhan.ai` with my own key
