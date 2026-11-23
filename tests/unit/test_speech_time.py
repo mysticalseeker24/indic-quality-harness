@@ -88,6 +88,18 @@ def test_unbroken_sound_is_cut_by_the_29_s_rule() -> None:
     assert all(s <= 29.0 for s in lengths) and all(s >= 18.0 for s in lengths[:-1])
 
 
+def test_unbroken_sound_that_fits_in_one_request_is_not_cut() -> None:
+    # 14-18 s left with no pause used to search for a cut 18 s ahead, past the end (ValueError on argmin)
+    for total_s in (15.0, 16.5, 17.7, 33.0, 35.1, 46.5):
+        x = np.concatenate([tone_word(5, 0.3) for _ in range(round(total_s / 0.3))])
+        plan = A.chunk_plan(x, SR)
+        assert plan[0][0] == 0 and plan[-1][1] == len(x)
+        assert all(a == b for (_, a), (b, _) in zip(plan, plan[1:]))
+        assert all(0 < (b - a) / SR <= 29.0 for a, b in plan)
+        if total_s <= 29.0:
+            assert plan == [(0, len(x))]
+
+
 def test_every_request_stays_under_30_s() -> None:
     for x in (sentences(25), sentences(5, words=70)):
         assert all((b - a) / SR <= 29.0 for a, b in A.chunk_plan(x, SR) + A.alt_chunk_plan(x, SR, A.chunk_plan(x, SR)))

@@ -230,7 +230,8 @@ def chunk_plan(x: np.ndarray, sr: int, target_s: float = 10.0, max_s: float = 29
       1. a sentence pause within ``target_s`` +-40 % (6-14 s), the one closest to ``target_s``;
       2. the nearest sentence pause up to ``max_s`` (a long chunk beats cutting a sentence);
       3. a pause between words within 6-14 s;
-      4. the quietest 100 ms between 18 s and ``max_s`` (unbroken sound).
+      4. the quietest 100 ms between 18 s and ``max_s`` (unbroken sound); if the rest is at most ``max_s``,
+         no cut: it is the last chunk.
     """
     n = len(x)
     lo_s, hi_s = 0.6 * target_s, 1.4 * target_s
@@ -251,6 +252,8 @@ def chunk_plan(x: np.ndarray, sr: int, target_s: float = 10.0, max_s: float = 29
         if cut_s is None:
             cut_s = nearest(t0, lo_s, hi_s, 0.0)
         if cut_s is None:
+            if n - pos <= max_s * sr:  # no pause to cut at, and the rest fits in one request
+                break
             cut = _quietest(x, sr, pos + int(LONG_CHUNK_MIN_S * sr), pos + int(max_s * sr))
         else:
             cut = int(cut_s * sr)
