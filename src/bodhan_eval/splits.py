@@ -9,6 +9,7 @@ Writes into ``--out-dir``:
                      leaves it out with --exclude, so the scores are measured on items the run did not tune on)
   bakeoff.jsonl      labelled items for the judge bake-off: no speech labels (the judge reads text only)
   splits.json        what went where
+  demo_gold_reviewed.jsonl  with ``--known-errors``: the gold plus the errors the model made itself (score with it)
 Both subsets are half clean. Error items are taken round-robin over categories, clean items one at a time,
 each time from the language least represented so far, in a seeded order: every category and language
 appears. Items labelled by ``--extra-labels`` (a human review of real outputs) all go into the bake-off, and
@@ -23,6 +24,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -90,6 +92,57 @@ def _audio_to(row: dict, src_dir: Path, out_dir: Path) -> dict:
     return row
 
 
+def _relocate(v: dict, translation: str) -> list[int] | None:
+    """Where the reviewed text is in this translation: the occurrence nearest its old position (an injected
+    edit before it shifts it), or None if the edit replaced it."""
+    text = str(v.get("text") or "")
+    starts = [m.start() for m in re.finditer(re.escape(text), translation)] if text else []
+    if not starts:
+        return None
+    old = (v.get("span") or [0])[0]
+    a = min(starts, key=lambda s: abs(s - old))
+    return [a, a + len(text)]
+
+
+def with_known_errors(gold: list[dict], review: list[dict]) -> tuple[list[dict], dict[str, int]]:
+    """Add the errors a review of the generated outputs confirmed (verdict ``real``) to the gold labels.
+
+    The injector treats every item it leaves alone as clean, but the model's own output has errors too; without
+    them, every true detection of one counts as a false alarm. ``false_alarm`` verdicts change nothing; an item
+    the gold calls clean whose only findings are ``debatable`` loses its labels (unsure: neither clean nor
+    labelled, so it is not scored). Translation-side labels are found again by their text, since the injector
+    may have edited the translation; a label whose text the edit replaced is dropped and counted.
+    """
+    by_key: dict[tuple[str, str], list[dict]] = {}
+    for v in review:
+        by_key.setdefault(_key(v), []).append(v)
+    stats = {"added": 0, "dropped": 0, "unsure_items": 0}
+    out = []
+    for r in gold:
+        found = []
+        for v in by_key.get(_key(r), []):
+            if v["verdict"] != "real":
+                continue
+            lab = {"type": v["category"], "severity": v.get("severity") or "major", "annotator": v.get("reviewer")}
+            if v.get("text"):
+                span = _relocate(v, r.get("translation") or "")
+                if span is None:
+                    stats["dropped"] += 1
+                    continue
+                lab.update(span=span, span_on="translation")
+            else:
+                lab.update(span=v.get("source_span"), span_on="source")
+            found.append(lab)
+        stats["added"] += len(found)
+        if found:
+            r = {**r, "labels": (r.get("labels") or []) + found}
+        elif r.get("labels") == [] and any(v["verdict"] == "debatable" for v in by_key.get(_key(r), [])):
+            r = {k: x for k, x in r.items() if k != "labels"}
+            stats["unsure_items"] += 1
+        out.append(r)
+    return out, stats
+
+
 def split(args: argparse.Namespace) -> dict[str, Any]:
     out_dir: Path = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -100,6 +153,10 @@ def split(args: argparse.Namespace) -> dict[str, Any]:
         extra.update({_key(r): r["labels"] for r in _read(path) if r.get("labels") is not None})
 
     _write(out_dir / "demo.jsonl", [{k: v for k, v in r.items() if k != "labels"} for r in gold])
+    known: dict[str, int] | None = None
+    if args.known_errors:
+        gold, known = with_known_errors(gold, _read(args.known_errors))
+        _write(out_dir / "demo_gold_reviewed.jsonl", gold)
     labelled = [r for r in gold if r.get("labels") is not None and _key(r) not in extra]
     calibration = half_clean(labelled, args.calibration_size, args.seed)
     _write(out_dir / "demo_labels.jsonl", [{"id": r["id"], "lang": r["lang"], "labels": r["labels"]} for r in calibration])
@@ -129,6 +186,8 @@ def split(args: argparse.Namespace) -> dict[str, Any]:
         "calibration": counts(calibration),
         "bakeoff": {**counts(bakeoff), "reviewed": len(reviewed)},
     }
+    if known is not None:
+        summary["known_errors"] = known
     (out_dir / "splits.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return summary
 
@@ -138,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--gold", type=Path, required=True, help="labelled demo items (the injector's output)")
     ap.add_argument("--heldout-gold", type=Path, help="labelled items in held-out languages")
     ap.add_argument("--extra-labels", type=Path, action="append", help="id + lang + labels lines (e.g. a review)")
+    ap.add_argument("--known-errors", type=Path, help="review verdicts on the generated outputs' flags (D45)")
     ap.add_argument("--out-dir", type=Path, required=True)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--calibration-size", type=_positive_int, default=40)

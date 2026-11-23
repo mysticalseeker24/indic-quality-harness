@@ -124,6 +124,39 @@ def test_the_rest_of_the_bakeoff_complements_the_reviewed_items(tmp_path: Path) 
     assert len(filled) == 2 and "mistranslation" not in filled  # categories the review did not cover come first
 
 
+def verdict(iid: str, lang: str, category: str, text: str | None, v: str, span: list[int] | None = None) -> dict:
+    return {"id": iid, "lang": lang, "category": category, "severity": "major", "span": span, "text": text,
+            "source_span": None if text else [0, 4], "verdict": v, "reviewer": "ai-review"}  # fmt: skip
+
+
+def test_known_errors_from_a_review_of_the_generated_outputs_join_the_gold(tmp_path: Path) -> None:
+    review = write(tmp_path / "review.jsonl", [
+        verdict("t00", "hi", "term", "पाठ", "real", [0, 3]),  # a clean item that was not clean
+        verdict("t01", "hi", "omission", "पाठ", "debatable", [0, 3]),  # unsure: neither clean nor labelled
+        verdict("t02", "hi", "term", "पाठ", "false_alarm", [0, 3]),  # stays clean
+        verdict("t20", "hi", "term", "20।", "real", [9, 12]),  # injected item: found again in its translation
+        verdict("t21", "hi", "number", "not in the text", "real", [0, 5]),  # injected text replaced it: dropped
+        verdict("t22", "hi", "omission", None, "real"),  # source-side label: kept as is
+        verdict("t36", "hi", "speech_omission", "पाठ", "real", [0, 3]),  # review-sheet item: now labelled
+    ])  # fmt: skip
+    data = run(tmp_path, "--known-errors", str(review))
+    gold = {(r["id"], r["lang"]): r for r in read(data / "demo_gold_reviewed.jsonl")}
+    assert gold[("t00", "hi")]["labels"] == [{"type": "term", "severity": "major", "span": [0, 3],
+                                              "span_on": "translation", "annotator": "ai-review"}]  # fmt: skip
+    assert "labels" not in gold[("t01", "hi")] and gold[("t02", "hi")]["labels"] == []
+    t20 = gold[("t20", "hi")]
+    assert [lab["annotator"] for lab in t20["labels"]] == ["injector:x", "ai-review"]
+    assert t20["labels"][1]["span"] == [4, 7] and t20["translation"][4:7] == "20।"
+    assert [lab["annotator"] for lab in gold[("t21", "hi")]["labels"]] == ["injector:x"]
+    assert gold[("t22", "hi")]["labels"][1] == {"type": "omission", "severity": "major", "span": [0, 4],
+                                                 "span_on": "source", "annotator": "ai-review"}  # fmt: skip
+    assert gold[("t36", "hi")]["labels"][0]["type"] == "speech_omission"
+    cal = {(r["id"], r["lang"]) for r in read(data / "demo_labels.jsonl")}
+    assert ("t01", "hi") not in cal  # never used as clean
+    summary = json.loads((data / "splits.json").read_text("utf-8"))
+    assert summary["known_errors"] == {"added": 4, "dropped": 1, "unsure_items": 1}
+
+
 def test_split_is_deterministic_and_seeded(tmp_path: Path) -> None:
     data = run(tmp_path)
     first = (data / "demo_labels.jsonl").read_bytes(), (data / "bakeoff.jsonl").read_bytes()
