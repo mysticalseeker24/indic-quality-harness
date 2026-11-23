@@ -29,6 +29,7 @@ Legend: ✅ draft written and smoke-tested · 🟡 draft with known issues (see 
 | `diff.py` | 🟡 | P1 minimal (D18); P6 full |
 | `inject/` (package) | ✅ | P5 — 33 methods (20 text, 7 `--with-models`, 6 speech), seeded per item and method, labels with severity; never holds an LLM client (D41); tests incl. tier-0 round trips |
 | `score.py` | ✅ | P5 — hidden-test-style scorecard (`--exclude` for out-of-sample); offline inject → run → calibrate → score loop test |
+| `review.py` | ✅ | P5 (pulled forward from P6) — review sheet export (flagged, review queue, seeded sample of the rest; back-translation from cache) and import of the answers as `annotator: saksham` labels for `--calibration`; P6 adds the review-queue view |
 | `bakeoff.py` | ✅ | P3 — judge model comparison; estimate + `--max-usd` refusal and stop; mini run done, full run after P5 (D33) |
 | `api.py` | ⬜ | P6 — library entry points for reuse in other projects |
 | extras: `mqm.py`, `review.py`, `dashboard.py`, `voices.py`, CI mode | ⬜ | P6 |
