@@ -38,6 +38,12 @@
     "replica_weight": 0.45,
     "max_tokens": 1500
   },
+  "clients": {
+    "_comment": "Retry and concurrency policy shared by the Bodhan and LLM clients (K11). Back-off is retry_base_s * 2^attempt with jitter; a Retry-After header is honoured up to retry_max_wait_s; after aimd_increase_after consecutive successes a service's concurrency grows by one (it halves on HTTP 429).",
+    "retry_base_s": 1.5,
+    "retry_max_wait_s": 60,
+    "aimd_increase_after": 20
+  },
   "costs_inr": {
     "translate_per_output_token": 0.00002,
     "speak_per_char": 0.0006,

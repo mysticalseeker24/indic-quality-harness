@@ -9,7 +9,7 @@ import pytest
 
 from bodhan_eval.budget import Budget
 from bodhan_eval.cache import Cache
-from bodhan_eval.clients import BodhanClient, BodhanError, LLMClient, ServiceUnavailable, strip_indic
+from bodhan_eval.clients import BodhanClient, BodhanError, LLMClient, LLMError, ServiceUnavailable, strip_indic
 from bodhan_eval.config import Settings
 from bodhan_eval.testing.stub_server import StubServer
 
@@ -195,27 +195,150 @@ def test_tts_422_is_not_retried(stub: StubServer, cache: Cache) -> None:
     assert len(stub.requests) == 1
 
 
-# ---- LLM ---------------------------------------------------------------------
+# ---- LLM (K1) ------------------------------------------------------------------
+
+SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["errors"],
+    "properties": {"errors": {"type": "array", "items": {"type": "object"}}},
+}
+VERDICT = [{"role": "user", "content": "verdict please"}]
 
 
-def llm(stub: StubServer, cache: Cache, **kw) -> LLMClient:
-    return LLMClient(settings_for(stub, max_retries=0, **kw), cache, Budget(None))
+def llm(stub: StubServer, cache: Cache, budget: Budget | None = None, price: float = 0.0, **kw) -> LLMClient:
+    extra_body = kw.pop("extra_body", None)
+    return LLMClient(settings_for(stub, max_retries=1, **kw), cache, budget or Budget(None), price, extra_body)
 
 
-def test_llm_json_object_answer_parsed_and_cached(stub: StubServer, cache: Cache) -> None:
+def formats(stub: StubServer) -> list[tuple[int, str | None]]:
+    return [(r["status"], r.get("response_format")) for r in stub.requests]
+
+
+def test_llm_answer_parsed_and_cached(stub: StubServer, cache: Cache) -> None:
     client = llm(stub, cache)
-    msgs = [{"role": "user", "content": "verdict please"}]
-    assert client.chat_json(msgs) == {"errors": [], "note": "fine"}
-    assert client.chat_json(msgs) == {"errors": [], "note": "fine"}
-    assert len(stub.requests) == 1 and stub.requests[0]["response_format"] is True
+    assert client.chat_json(VERDICT) == {"errors": [], "note": "fine"}
+    assert client.chat_json(VERDICT) == {"errors": [], "note": "fine"}
+    assert formats(stub) == [(200, "json_object")]  # no schema given: the chain starts at json_object
 
 
-def test_llm_falls_back_when_response_format_is_rejected(stub: StubServer, cache: Cache) -> None:
-    stub.add_fault("/chat/completions", 400, times=1, message="response_format is not supported by this model")
+def test_llm_uses_strict_json_schema_when_given_one(stub: StubServer, cache: Cache) -> None:
     client = llm(stub, cache)
-    assert client.chat_json([{"role": "user", "content": "verdict please"}]) == {"errors": [], "note": "fine"}
-    assert stub.requests[0]["status"] == 400
-    assert stub.requests[1]["response_format"] is False
+    assert client.chat_json(VERDICT, schema=SCHEMA) == {"errors": [], "note": "fine"}
+    assert formats(stub) == [(200, "json_schema")]
+    sent = stub.requests[0]["json_schema"]
+    assert sent["strict"] is True and sent["schema"] == SCHEMA
+    assert client.format_for("stub-judge") == "json_schema"
+
+
+def test_llm_json_schema_rejected_falls_back_to_json_object_and_remembers(start_stub, cache: Cache) -> None:
+    stub = start_stub({**FIXTURE, "chat_unsupported_formats": {"stub-judge": ["json_schema"]}})
+    client = llm(stub, cache)
+    assert client.chat_json(VERDICT, schema=SCHEMA) == {"errors": [], "note": "fine"}
+    assert client.chat_json([{"role": "user", "content": "verdict please, again"}], schema=SCHEMA) is not None
+    assert formats(stub) == [(400, "json_schema"), (200, "json_object"), (200, "json_object")]
+    assert client.format_for("stub-judge") == "json_object"
+
+
+def test_llm_both_formats_rejected_falls_back_to_plain(start_stub, cache: Cache) -> None:
+    stub = start_stub({**FIXTURE, "chat_unsupported_formats": {"*": ["json_schema", "json_object"]}})
+    client = llm(stub, cache)
+    assert client.chat_json(VERDICT, schema=SCHEMA) == {"errors": [], "note": "fine"}
+    assert formats(stub) == [(400, "json_schema"), (400, "json_object"), (200, None)]
+    assert client.format_for("stub-judge") == "plain"
+
+
+def test_llm_format_memory_is_per_model(start_stub, cache: Cache) -> None:
+    stub = start_stub({**FIXTURE, "chat_unsupported_formats": {"weak-model": ["json_schema"]}})
+    client = llm(stub, cache)
+    client.chat_json(VERDICT, schema=SCHEMA, model="weak-model")
+    client.chat_json(VERDICT, schema=SCHEMA, model="strong-model")
+    assert [(r["model"], r["status"], r["response_format"]) for r in stub.requests] == [
+        ("weak-model", 400, "json_schema"),
+        ("weak-model", 200, "json_object"),
+        ("strong-model", 200, "json_schema"),
+    ]
+    assert client.format_for("weak-model") == "json_object" and client.format_for("strong-model") == "json_schema"
+
+
+def test_llm_error_on_every_format_raises_and_lowers_nothing(stub: StubServer, cache: Cache) -> None:
+    """A 400 that is not about the format (it fails at every level) must not leave the model on plain prompting."""
+    stub.add_fault("/chat/completions", 400, times=3, message="prompt too long")
+    client = llm(stub, cache)
+    with pytest.raises(LLMError) as err:
+        client.chat_json(VERDICT, schema=SCHEMA)
+    assert err.value.status == 400
+    assert client.chat_json(VERDICT, schema=SCHEMA) is not None
+    assert formats(stub)[-1] == (200, "json_schema")
+
+
+def test_llm_auth_error_is_not_a_format_problem(stub: StubServer, cache: Cache) -> None:
+    stub.add_fault("/chat/completions", 401, times=1, message="bad key")
+    with pytest.raises(LLMError) as err:
+        llm(stub, cache).chat_json(VERDICT, schema=SCHEMA)
+    assert err.value.status == 401
+    assert len(stub.requests) == 1
+
+
+def test_llm_empty_content_retried_once_with_double_max_tokens(start_stub, cache: Cache) -> None:
+    """A reasoning model that spends all of max_tokens thinking returns no content: one retry with twice the room."""
+    stub = start_stub(
+        {
+            "chat": [
+                {"contains": "think hard", "min_max_tokens": 3000, "content": '{"errors": []}'},
+                {"contains": "think hard", "content": "", "finish_reason": "length"},
+            ]
+        }
+    )
+    budget = Budget(None)
+    client = llm(stub, cache, budget, price=0.1)
+    assert client.chat_json([{"role": "user", "content": "think hard"}], max_tokens=1500) == {"errors": []}
+    assert [r["max_tokens"] for r in stub.requests] == [1500, 3000]
+    assert budget.calls == {"llm": 2}  # two billed requests, each counted once
+    assert budget.llm_tokens["prompt"] > 0 and budget.reserved == 0.0
+
+
+def test_llm_empty_content_twice_gives_none(start_stub, cache: Cache) -> None:
+    stub = start_stub({"chat": [{"contains": "think", "content": "", "finish_reason": "length"}]})
+    assert llm(stub, cache).chat_json([{"role": "user", "content": "think"}]) is None
+    assert len(stub.requests) == 2
+
+
+def test_llm_extra_body_is_merged_into_the_request(stub: StubServer, cache: Cache) -> None:
+    client = llm(stub, cache, extra_body={"reasoning": {"effort": "low"}})
+    client.chat_json(VERDICT)
+    assert stub.requests[0]["extra"] == {"reasoning": {"effort": "low"}}
+
+
+def test_llm_extra_body_is_off_by_default(stub: StubServer, cache: Cache) -> None:
+    llm(stub, cache).chat_json(VERDICT)
+    assert stub.requests[0]["extra"] == {}
+
+
+def test_llm_provider_reported_cost_is_recorded(start_stub, cache: Cache) -> None:
+    stub = start_stub({"chat": [{"contains": "priced", "content": '{"errors": []}', "cost": 0.0021}]})
+    budget = Budget(None)
+    client = llm(stub, cache, budget)
+    client.chat_json([{"role": "user", "content": "priced"}])
+    client.chat_json([{"role": "user", "content": "priced"}])  # cache hit: nothing paid
+    assert budget.llm_cost_usd == pytest.approx(0.0021)
+
+
+def test_llm_model_can_be_chosen_per_call(stub: StubServer, cache: Cache) -> None:
+    client = llm(stub, cache)
+    client.chat_json(VERDICT, model="juror-b")
+    client.chat_json(VERDICT, model="juror-b")  # cached per model
+    client.chat_json(VERDICT)
+    assert [r["model"] for r in stub.requests] == ["juror-b", "stub-judge"]
+
+
+def test_llm_cache_tag_changes_only_the_cache_key(stub: StubServer, cache: Cache) -> None:
+    """Repeat-consistency (K2c) re-sends the identical prompt; the tag lives in the cache key, not the request."""
+    client = llm(stub, cache)
+    client.chat_json(VERDICT)
+    client.chat_json(VERDICT, cache_tag="repeat")
+    assert len(stub.requests) == 2
+    assert stub.requests[0]["body_hash"] == stub.requests[1]["body_hash"]
 
 
 def test_llm_non_json_answer_is_none(stub: StubServer, cache: Cache) -> None:

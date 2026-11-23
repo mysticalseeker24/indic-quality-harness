@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import logging
 import sys
 from pathlib import Path
@@ -58,6 +59,16 @@ def _positive_int(value: str) -> int:
     return n
 
 
+def _json_object(value: str) -> dict:
+    try:
+        obj = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"not valid JSON: {e.msg}") from e
+    if not isinstance(obj, dict):
+        raise argparse.ArgumentTypeError('must be a JSON object, e.g. \'{"reasoning": {"effort": "low"}}\'')
+    return obj
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="python -m bodhan_eval",
@@ -95,6 +106,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.0,
         help="LLM price used for budgeting and cost reporting",
     )
+    judge.add_argument(
+        "--llm-extra-body",
+        type=_json_object,
+        metavar="JSON",
+        help='provider-specific fields merged into every LLM request, e.g. \'{"reasoning": {"effort": "low"}}\'',
+    )
     speech = ap.add_argument_group("speech")
     speech.add_argument("--no-speech", action="store_true", help="skip speech synthesis and speech checks")
     speech.add_argument(
@@ -131,6 +148,7 @@ def options_from_args(args: argparse.Namespace) -> RunOptions:
         voices=dict(args.voice),
         label_span_on=args.label_span_on,
         llm_inr_per_1k_tokens=args.llm_inr_per_1k_tokens,
+        llm_extra_body=args.llm_extra_body,
     )
 
 

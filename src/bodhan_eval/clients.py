@@ -25,8 +25,12 @@ import re
 import threading
 import time
 import wave
-from typing import Any
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Any, TypeVar
 
+import openai
 import requests
 
 from .budget import Budget, BudgetExceeded
@@ -34,6 +38,7 @@ from .cache import Cache, bytes_hash
 from .config import Settings, defaults
 
 log = logging.getLogger("bodhan_eval.clients")
+T = TypeVar("T")
 
 TRANSLATE_MODEL = "indic-translate"
 TRANSLITERATE_MODEL = "indic-transliterate"
@@ -57,29 +62,131 @@ class ServiceUnavailable(RuntimeError):
     """A model cannot be called (no key configured). Checks that need it skip themselves."""
 
 
-class BodhanError(RuntimeError):
+class ApiError(RuntimeError):
+    """An HTTP error that retrying will not fix, or retries that ran out (``status`` 0, ``code`` retries_exhausted)."""
+
     def __init__(self, status: int, code: str, message: str):
         super().__init__(f"HTTP {status} {code}: {message}")
         self.status = status
         self.code = code
 
 
+class BodhanError(ApiError):
+    """From a Bodhan model."""
+
+
+class LLMError(ApiError):
+    """From the judge LLM endpoint."""
+
+
 class _Retryable(Exception):
-    def __init__(self, msg: str, retry_after: float | None = None):
+    """A failed attempt worth repeating: 429, 408/409, 5xx, timeout or connection error."""
+
+    def __init__(self, msg: str, retry_after: float | None = None, rate_limited: bool = False):
         super().__init__(msg)
         self.retry_after = retry_after
+        self.rate_limited = rate_limited  # HTTP 429: the service asks us to slow down -> halve its concurrency
 
 
-def _retry(fn, attempts: int, what: str):
+_sleep = time.sleep  # the only place a back-off waits (tests record the waits instead of sleeping)
+
+
+def _retry_after(value: str | None) -> float | None:
+    """Seconds from a ``Retry-After`` header (the delta-seconds form; an HTTP date is ignored)."""
+    try:
+        x = float(value) if value else None
+    except ValueError:
+        return None
+    return x if x is not None and 0 <= x < float("inf") else None
+
+
+class AdaptiveLimiter:
+    """Concurrency limit for one service that adapts to rate limiting (AIMD, like TCP congestion control; K11).
+
+    * Additive increase: after ``increase_after`` consecutive successes, +1, up to the configured maximum.
+    * Multiplicative decrease: on HTTP 429, halve (minimum 1).
+
+    Requests that were already in flight when the limit was halved belong to the old window; their 429s are the
+    same congestion event, so they do not halve again (six parallel 429s: 8 -> 4, not 8 -> 1). Every request
+    records the window ("generation") it started in for that purpose. A 5xx, timeout or connection error
+    breaks the success streak but does not halve: it says nothing about our request rate.
+    """
+
+    def __init__(self, name: str, max_limit: int, increase_after: int):
+        self.name = name
+        self.max_limit = max(1, max_limit)
+        self.limit = self.max_limit
+        self.increase_after = max(1, increase_after)
+        self.in_flight = 0
+        self.streak = 0
+        self.generation = 0
+        self._cond = threading.Condition()
+
+    @contextmanager
+    def slot(self) -> Iterator[int]:
+        """Wait for a free slot; yields the generation the request starts in."""
+        with self._cond:
+            while self.in_flight >= self.limit:
+                self._cond.wait()
+            self.in_flight += 1
+            ticket = self.generation
+        try:
+            yield ticket
+        finally:
+            with self._cond:
+                self.in_flight -= 1
+                self._cond.notify_all()
+
+    def success(self) -> None:
+        with self._cond:
+            self.streak += 1
+            if self.streak >= self.increase_after:
+                self.streak = 0
+                if self.limit < self.max_limit:
+                    self.limit += 1
+                    self._cond.notify_all()
+
+    def failure(self, ticket: int, rate_limited: bool) -> None:
+        with self._cond:
+            self.streak = 0
+            if rate_limited and ticket == self.generation:
+                self.generation += 1
+                if self.limit > 1:
+                    self.limit = max(1, self.limit // 2)
+                    log.warning("%s: rate limited (HTTP 429); concurrency lowered to %d", self.name, self.limit)
+
+
+def call_with_retries(
+    fn: Callable[[], T], limiter: AdaptiveLimiter, s: Settings, what: str, error: type[ApiError]
+) -> T:
+    """Run one attempt per concurrency slot, up to ``s.max_retries`` attempts. Same policy for Bodhan and the LLM.
+
+    429: the limiter halves, then wait ``Retry-After`` (capped) or back off. 5xx / 408 / 409 / timeout /
+    connection error: back off without halving. Back-off is exponential with jitter: base * 2^i, scaled
+    into [50 %, 100 %] so parallel workers do not retry in lockstep. The slot is released while waiting.
+    Any other error is raised at once. Budget is reserved by the caller once per logical call, so retries
+    (which are not billed) never count twice.
+    """
+    attempts = max(1, s.max_retries)
     for i in range(attempts):
         try:
-            return fn()
+            with limiter.slot() as ticket:
+                try:
+                    value = fn()
+                except _Retryable as e:
+                    limiter.failure(ticket, e.rate_limited)
+                    raise
+            limiter.success()
+            return value
         except _Retryable as e:
             if i == attempts - 1:
-                raise BodhanError(0, "retries_exhausted", f"{what}: {e}") from e
-            wait = e.retry_after if e.retry_after else min(30.0, 1.5 * 2**i) * (0.5 + random.random() / 2)
-            log.warning("%s failed (%s); retry %d/%d in %.1fs", what, e, i + 1, attempts - 1, wait)
-            time.sleep(wait)
+                raise error(0, "retries_exhausted", f"{what}: {e}") from e
+            if e.retry_after is not None:
+                wait = min(s.retry_max_wait_s, e.retry_after)
+            else:
+                wait = min(s.retry_max_wait_s, s.retry_base_s * 2**i) * (0.5 + random.random() / 2)
+            log.warning("%s failed (%s); retry %d/%d in %.2fs", what, e, i + 1, attempts - 1, wait)
+            _sleep(wait)
     raise AssertionError("unreachable")
 
 
@@ -97,8 +204,10 @@ class BodhanClient:
         self.cache = cache
         self.budget = budget
         self.costs = defaults()["costs_inr"]
-        n = max(1, settings.concurrency)
-        self._slots = {svc: threading.BoundedSemaphore(n) for svc in KEY_ENV}
+        # one adaptive limit per Bodhan model: keys, and so rate limits, are scoped per model (K11)
+        self.limiters = {
+            svc: AdaptiveLimiter(svc, settings.concurrency, settings.aimd_increase_after) for svc in KEY_ENV
+        }
         self._chat_transport: set[str] = set()  # product routes the gateway answered 404 for (see _text_call)
         self._rejected: dict[str, int] = {}  # service -> HTTP status of the auth failure (see _post)
 
@@ -137,12 +246,10 @@ class BodhanClient:
                     url, headers=headers, json=json_body, files=files, data=data, timeout=self.s.request_timeout_s
                 )
             except (requests.ConnectionError, requests.Timeout) as e:
-                raise _Retryable(str(e)) from e
+                raise _Retryable(type(e).__name__) from e
             if r.status_code == 429 or r.status_code >= 500:
-                ra = r.headers.get("retry-after")
-                raise _Retryable(
-                    f"HTTP {r.status_code}", float(ra) if ra and ra.replace(".", "", 1).isdigit() else None
-                )
+                retry_after = _retry_after(r.headers.get("retry-after"))
+                raise _Retryable(f"HTTP {r.status_code}", retry_after, rate_limited=r.status_code == 429)
             if r.status_code >= 400:
                 try:
                     err = r.json().get("error", {})
@@ -154,8 +261,7 @@ class BodhanClient:
             return r
 
         try:
-            with self._slots[service]:
-                return _retry(once, self.s.max_retries, f"{service} {path}")
+            return call_with_retries(once, self.limiters[service], self.s, f"{service} {path}", BodhanError)
         except BodhanError as e:
             if e.status in (401, 403):  # the key will not work for this model: stop sending it for the rest of the run
                 if service not in self._rejected:
@@ -330,22 +436,55 @@ def parse_json_object(text: str) -> dict | None:
     return obj if isinstance(obj, dict) else None
 
 
+FORMATS = ("json_schema", "json_object", "plain")
+# Statuses with which providers refuse a response_format they do not support. OpenRouter answers 404 when no
+# provider for the model accepts the requested parameters; others answer 400 or 422.
+FORMAT_REFUSED = (400, 404, 422)
+
+
+@dataclass
+class _Answer:
+    text: str
+    prompt_tokens: int
+    completion_tokens: int
+    cost_usd: float | None  # what the provider says it charged (OpenRouter's usage.cost), if it says
+
+
 class LLMClient:
-    def __init__(self, settings: Settings, cache: Cache, budget: Budget, inr_per_1k_tokens: float = 0.0):
+    """OpenAI-compatible chat client for the judge. It only ever asks the model to read and classify.
+
+    Response format (K1): ``json_schema`` (strict) when the caller gives a schema, else ``json_object``,
+    else a plain prompt whose answer is parsed for a JSON object. A format the endpoint refuses (HTTP 400,
+    404 or 422) is skipped for that model from then on, but only once a lower format has actually worked, so
+    an unrelated 400 cannot push a model down to plain prompting for the rest of the run.
+
+    Retries: the SDK's own retries are off (``max_retries=0``; the SDK cannot exempt 429 from them), so every
+    attempt goes through ``call_with_retries`` and the ``llm`` limiter, exactly like the Bodhan calls.
+    """
+
+    def __init__(
+        self,
+        settings: Settings,
+        cache: Cache,
+        budget: Budget,
+        inr_per_1k_tokens: float = 0.0,
+        extra_body: dict | None = None,
+    ):
         self.s = settings
         self.cache = cache
         self.budget = budget
         self.price = inr_per_1k_tokens
-        self._json_mode = True
+        self.extra_body = dict(extra_body or {})  # e.g. {"reasoning": {"effort": "low"}}; off by default
+        self.limiter = AdaptiveLimiter("llm", settings.concurrency, settings.aimd_increase_after)
+        self._lock = threading.Lock()
+        self._refused_below: dict[str, int] = {}  # model -> first FORMATS index worth trying
+        self._used: dict[str, str] = {}  # model -> format of its last successful answer
         self._client = None
-        self._slot = threading.BoundedSemaphore(max(1, settings.concurrency))
         if self.available():
-            from openai import OpenAI
-
-            self._client = OpenAI(
+            self._client = openai.OpenAI(
                 base_url=settings.llm_base_url,
                 api_key=settings.llm_api_key,
-                max_retries=settings.max_retries,
+                max_retries=0,
                 timeout=settings.request_timeout_s,
             )
 
@@ -356,63 +495,156 @@ class LLMClient:
     def model(self) -> str:
         return self.s.llm_model or "none"
 
-    def chat_json(self, messages: list[dict], *, max_tokens: int = 1500) -> dict | None:
-        """Temperature-0 chat call returning a parsed JSON object (or None if unparseable). Cached by exact input."""
+    def formats_used(self) -> dict[str, str]:
+        """Model -> response format of its last answer (reported in run_meta.json)."""
+        with self._lock:
+            return dict(sorted(self._used.items()))
+
+    def format_for(self, model: str | None = None) -> str | None:
+        """The response format the model's last answer came back in (None before its first answer)."""
+        return self._used.get(model or self.model)
+
+    def chat_json(
+        self,
+        messages: list[dict],
+        *,
+        max_tokens: int = 1500,
+        schema: dict | None = None,
+        model: str | None = None,
+        cache_tag: str | None = None,
+    ) -> dict | None:
+        """Temperature-0 chat call returning a parsed JSON object, or None if the answer is not one.
+
+        Cached by the exact request (model, messages, max_tokens, schema, extra body). ``cache_tag`` goes into
+        the cache key only, never into the request: it lets the repeat-consistency check ask the identical
+        question again (K2c). An empty answer (a reasoning model that spent all of ``max_tokens`` thinking) is
+        asked once more with twice the room; that second request is billed, so it is budgeted on its own.
+        """
         if not self.available():
             raise ServiceUnavailable("LLM_MODEL / LLM_API_KEY are not set")
-        params = {"temperature": 0, "max_tokens": max_tokens}
-        key = self.cache.key("llm", self.model, params, messages)
+        model = model or self.model
+        params: dict[str, Any] = {"temperature": 0, "max_tokens": max_tokens}
+        if schema is not None:
+            params["schema"] = schema
+        if self.extra_body:
+            params["extra_body"] = self.extra_body
+        if cache_tag:
+            params["cache_tag"] = cache_tag
+        key = self.cache.key("llm", model, params, messages)
         hit = self.cache.get(key)
         if hit is not None:
             value, cost = hit
             self.budget.record_cache_hit("llm", cost)
             self.budget.add_llm_tokens(value.get("prompt_tokens", 0), value.get("completion_tokens", 0))
             return parse_json_object(value["text"])
-        estimate = self.price * (sum(len(m["content"]) for m in messages) / 3 + max_tokens) / 1000
+        ans = self._budgeted(model, messages, max_tokens, schema)
+        cost = self._inr(ans)
+        if not ans.text.strip():
+            log.info("%s gave no content within %d tokens; asking once more with %d", model, max_tokens, 2 * max_tokens)
+            again = self._budgeted(model, messages, 2 * max_tokens, schema)
+            cost += self._inr(again)
+            ans = _Answer(
+                again.text,
+                ans.prompt_tokens + again.prompt_tokens,
+                ans.completion_tokens + again.completion_tokens,
+                None,
+            )
+        value = {"text": ans.text, "prompt_tokens": ans.prompt_tokens, "completion_tokens": ans.completion_tokens}
+        self.cache.put(key, "llm", value, cost)
+        return parse_json_object(ans.text)
+
+    # ---- one billed request -------------------------------------------------------
+    def _inr(self, ans: _Answer) -> float:
+        return self.price * (ans.prompt_tokens + ans.completion_tokens) / 1000
+
+    def _budgeted(self, model: str, messages: list[dict], max_tokens: int, schema: dict | None) -> _Answer:
+        """Reserve the estimate, make the request (retries included), settle at the token price."""
+        estimate = self.price * (sum(len(str(m["content"])) for m in messages) / 3 + max_tokens) / 1000
         self.budget.reserve("llm", estimate)
         try:
-            with self._slot:
-                text, usage = self._call(messages, params)
+            ans = self._complete(model, messages, max_tokens, schema)
         except BaseException:
             self.budget.release(estimate)
             raise
-        cost = self.price * (usage[0] + usage[1]) / 1000
-        self.budget.settle("llm", estimate, cost)
-        self.budget.add_llm_tokens(*usage)
-        self.cache.put(key, "llm", {"text": text, "prompt_tokens": usage[0], "completion_tokens": usage[1]}, cost)
-        return parse_json_object(text)
+        self.budget.settle("llm", estimate, self._inr(ans))
+        self.budget.add_llm_tokens(ans.prompt_tokens, ans.completion_tokens)
+        if ans.cost_usd is not None:
+            self.budget.add_llm_cost_usd(ans.cost_usd)
+        return ans
 
-    def _call(self, messages: list[dict], params: dict) -> tuple[str, tuple[int, int]]:
+    def _complete(self, model: str, messages: list[dict], max_tokens: int, schema: dict | None) -> _Answer:
+        """Walk the response-format chain from the best format this model has not refused."""
+        first = 0 if schema is not None else 1
+        start = max(first, self._refused_below.get(model, 0))
+        for level in range(start, len(FORMATS)):
+            fmt = FORMATS[level]
+            try:
+                resp = self._request(model, messages, max_tokens, fmt, schema)
+            except LLMError as e:
+                if e.status in FORMAT_REFUSED and level < len(FORMATS) - 1:
+                    log.info("%s: %s refused (HTTP %d); trying %s", model, fmt, e.status, FORMATS[level + 1])
+                    continue
+                raise
+            with self._lock:
+                if level > start:  # a better format was refused and this one worked: skip it from now on
+                    self._refused_below[model] = max(self._refused_below.get(model, 0), level)
+                    log.warning("%s: using response format %s for the rest of the run", model, fmt)
+                self._used[model] = fmt
+            return _parse_completion(resp)
+        raise AssertionError("unreachable")
+
+    def _request(self, model: str, messages: list[dict], max_tokens: int, fmt: str, schema: dict | None) -> Any:
         if self._client is None:
             raise ServiceUnavailable("LLM not configured (LLM_MODEL / LLM_API_KEY)")
-        kwargs: dict = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": params["temperature"],
-            "max_tokens": params["max_tokens"],
-        }
-        if self._json_mode:
+        kwargs: dict[str, Any] = {"model": model, "messages": messages, "temperature": 0, "max_tokens": max_tokens}
+        if fmt == "json_schema":
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "answer", "strict": True, "schema": schema},
+            }
+        elif fmt == "json_object":
             kwargs["response_format"] = {"type": "json_object"}
-        try:
-            resp = self._client.chat.completions.create(**kwargs)
-        except Exception as e:  # some providers reject response_format: fall back to plain text + JSON parsing
-            msg = str(e).lower()
-            if self._json_mode and ("response_format" in msg or "json" in msg):
-                log.info("LLM provider rejected response_format; falling back to plain JSON prompting")
-                self._json_mode = False
-                kwargs.pop("response_format", None)
-                resp = self._client.chat.completions.create(**kwargs)
-            else:
-                raise
-        text = resp.choices[0].message.content or ""
-        u = getattr(resp, "usage", None)
-        usage = (int(getattr(u, "prompt_tokens", 0) or 0), int(getattr(u, "completion_tokens", 0) or 0))
-        return text, usage
+        if self.extra_body:
+            kwargs["extra_body"] = self.extra_body
+        client = self._client
+
+        def once() -> Any:
+            try:
+                return client.chat.completions.create(**kwargs)
+            except openai.RateLimitError as e:
+                raise _Retryable("HTTP 429", _retry_after(e.response.headers.get("retry-after")), True) from e
+            except openai.APIConnectionError as e:  # includes APITimeoutError
+                raise _Retryable(type(e).__name__) from e
+            except openai.APIStatusError as e:
+                if e.status_code in (408, 409) or e.status_code >= 500:
+                    retry_after = _retry_after(e.response.headers.get("retry-after"))
+                    raise _Retryable(f"HTTP {e.status_code}", retry_after) from e
+                code = str(getattr(e, "code", None) or e.status_code)
+                raise LLMError(e.status_code, code, str(e.message)[:300]) from e
+
+        return call_with_retries(once, self.limiter, self.s, f"llm {model}", LLMError)
+
+
+def _parse_completion(resp: Any) -> _Answer:
+    choices = getattr(resp, "choices", None) or []
+    message = getattr(choices[0], "message", None) if choices else None
+    text = str(getattr(message, "content", None) or "")
+    u = getattr(resp, "usage", None)
+    cost = getattr(u, "cost", None)  # OpenRouter adds usage.cost (USD); the SDK keeps unknown fields
+    return _Answer(
+        text=text,
+        prompt_tokens=int(getattr(u, "prompt_tokens", 0) or 0),
+        completion_tokens=int(getattr(u, "completion_tokens", 0) or 0),
+        cost_usd=float(cost) if isinstance(cost, (int, float)) else None,
+    )
 
 
 __all__ = [
+    "AdaptiveLimiter",
+    "ApiError",
     "BodhanClient",
     "LLMClient",
+    "LLMError",
     "ServiceUnavailable",
     "BodhanError",
     "BudgetExceeded",

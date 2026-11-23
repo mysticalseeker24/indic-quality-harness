@@ -73,6 +73,7 @@ class RunOptions:
     voices: dict[str, str] = field(default_factory=dict)
     label_span_on: str = "translation"
     llm_inr_per_1k_tokens: float = 0.0
+    llm_extra_body: dict[str, Any] | None = None  # merged into every LLM request (K1); None = provider defaults
 
 
 class EventLog:
@@ -121,6 +122,7 @@ class RunResult:
     calibration: dict[str, Any]
     generation: dict[str, str]  # item key -> what --generate did for it
     budget: Budget
+    llm_formats: dict[str, str] = field(default_factory=dict)  # judge model -> response format it ended up on
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +175,7 @@ def execute(items: list[Item], rep: LoadReport, ctx: RunContext, opts: RunOption
         per_check=per_check(results),
         judge_consistency=judge_consistency(results),
     )
-    return RunResult(opts, results, rep, thresholds, calibration, generation, ctx.budget)
+    return RunResult(opts, results, rep, thresholds, calibration, generation, ctx.budget, ctx.llm.formats_used())
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +207,7 @@ def _context(opts: RunOptions) -> RunContext:
         judge_cfg=judge_cfg,
         options={"judge": opts.judge, "voices": dict(opts.voices)},
         bodhan=BodhanClient(settings, cache, budget),
-        llm=LLMClient(settings, cache, budget, opts.llm_inr_per_1k_tokens),
+        llm=LLMClient(settings, cache, budget, opts.llm_inr_per_1k_tokens, opts.llm_extra_body),
         budget=budget,
         cache=cache,
         events=EventLog(opts.out / "logs" / "events.jsonl"),

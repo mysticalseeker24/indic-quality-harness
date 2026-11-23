@@ -18,9 +18,17 @@ Responses come from lookup tables in a fixture JSON:
       "translate":     {"<target_language>": {"<text>": "<translation>" | {"text": ..., "truncated": true}}},
       "transliterate": {"<language>": {"<text>": "<rendering>"}},
       "transcribe":    {"<language>": "<transcript>"},
-      "chat":          [{"contains": "<substring of the last user message>", "content": "<assistant text>"}],
+      "chat":          [{"contains": "<substring of the last user message>", "content": "<assistant text>",
+                         "model": "<only this model>", "min_max_tokens": 3000,
+                         "finish_reason": "length", "cost": 0.0012}],
+      "chat_unsupported_formats": {"<model or *>": ["json_schema", "json_object"]},
       "faults":        [{"path": "/translate", "status": 429, "times": 2, "retry_after": "0.01"}]
     }
+
+Chat rules are tried in order; the first whose optional conditions all hold answers. ``finish_reason:
+"length"`` with empty content imitates a reasoning model that spent all of ``max_tokens`` thinking; ``cost``
+is returned as ``usage.cost`` like OpenRouter does. A ``response_format`` type listed under
+``chat_unsupported_formats`` is refused with HTTP 400, as some providers do.
 
 Unmatched requests get deterministic defaults (translate/transliterate echo the text,
 an empty transcript, a judge answer with no errors) and are recorded in ``misses``.
@@ -32,6 +40,7 @@ Faults fire on requests whose path ends with ``path`` (and whose body contains
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import threading
 import time
@@ -51,6 +60,8 @@ STUB_CHARS_PER_SECOND = 13.0  # matches the speaking-rate prior in langs.json
 MAX_TRANSCRIBE_SECONDS = 30.0
 REJECTED_TRANSLATE_FIELDS = ("temperature", "max_tokens", "stream")
 # Bodhan text models on the chat-completions transport: model -> (fixture table, language field)
+# request fields the judge client always sends; anything else in a chat request came from --llm-extra-body
+OPENAI_CHAT_FIELDS = frozenset({"model", "messages", "temperature", "max_tokens", "response_format"})
 BODHAN_CHAT_MODELS = {
     "indic-translate": ("translate", "target_language"),
     "indic-transliterate": ("transliterate", "language"),
@@ -121,9 +132,10 @@ class StubState:
 
 
 class _ApiError(Exception):
-    def __init__(self, status: int, code: str, message: str):
+    def __init__(self, status: int, code: str, message: str, **details: Any):
         super().__init__(message)
         self.status, self.code, self.message = status, code, message
+        self.details = details  # logged with the request, e.g. which model and format were refused
 
 
 def _parse_multipart(content_type: str, body: bytes) -> dict[str, bytes]:
@@ -161,7 +173,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             status, ctype, payload, details = self._route(path, body)
         except _ApiError as e:
-            state.log(path, e.status, error=e.code, bearer=bearer)
+            state.log(path, e.status, error=e.code, bearer=bearer, **e.details)
             self._error(e.status, e.code, e.message)
             return
         state.log(path, status, bearer=bearer, **details)
@@ -237,30 +249,56 @@ class _Handler(BaseHTTPRequestHandler):
         req = _json(body)
         if req.get("model") in BODHAN_CHAT_MODELS:
             return self._bodhan_chat(req)
+        model = str(req.get("model", "stub"))
+        rf = req.get("response_format") or {}
+        fmt = rf.get("type") if isinstance(rf, dict) else None
+        unsupported = self.server.state.fixture.get("chat_unsupported_formats", {})
+        if fmt and fmt in unsupported.get(model, unsupported.get("*", [])):
+            raise _ApiError(
+                400,
+                "invalid_request_error",
+                f"response_format {fmt} is not supported by {model}",
+                model=model,
+                response_format=fmt,
+            )
         messages = req.get("messages") or []
         user = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
-        content = None
-        for rule in self.server.state.fixture.get("chat", []):
-            if rule.get("contains", "") in user:
-                content = rule["content"]
-                break
-        if content is None:
-            content = '{"errors": []}'
-            self.server.state.miss("chat")
+        max_tokens = int(req.get("max_tokens") or 0)
+        rule = next(
+            (r for r in self.server.state.fixture.get("chat", []) if _chat_rule_matches(r, user, model, max_tokens)),
+            None,
+        )
+        if rule is None:
+            rule = {"content": '{"errors": []}'}
+            self.server.state.miss("chat", model=model)
+        content = str(rule["content"])
         prompt_tokens = sum(len(str(m.get("content", ""))) for m in messages) // 4
+        # an empty answer cut by the length limit: a reasoning model that used all of max_tokens thinking
+        completion_tokens = max_tokens if rule.get("finish_reason") == "length" else len(content) // 4
+        usage: dict[str, Any] = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        }
+        if "cost" in rule:
+            usage["cost"] = rule["cost"]  # OpenRouter-style provider-reported cost (USD)
+        message = {"role": "assistant", "content": content}
         resp = {
             "id": "stub-chat",
             "object": "chat.completion",
             "created": 0,
-            "model": req.get("model", "stub"),
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": len(content) // 4,
-                "total_tokens": prompt_tokens + len(content) // 4,
-            },
+            "model": model,
+            "choices": [{"index": 0, "message": message, "finish_reason": rule.get("finish_reason", "stop")}],
+            "usage": usage,
         }
-        details = {"model": req.get("model"), "response_format": "response_format" in req}
+        details = {
+            "model": model,
+            "response_format": fmt,
+            "json_schema": rf.get("json_schema") if fmt == "json_schema" else None,
+            "max_tokens": max_tokens,
+            "extra": {k: v for k, v in req.items() if k not in OPENAI_CHAT_FIELDS},
+            "body_hash": hashlib.sha256(body).hexdigest(),
+        }
         return 200, "application/json", _dumps(resp), details
 
     def _bodhan_chat(self, req: dict) -> tuple[int, str, bytes, dict]:
@@ -315,6 +353,14 @@ class _Handler(BaseHTTPRequestHandler):
     def _error(self, status: int, code: str, message: str, headers: dict[str, str] | None = None) -> None:
         envelope = {"error": {"message": message, "code": code, "request_id": "stub"}}
         self._send(status, "application/json", _dumps(envelope), headers)
+
+
+def _chat_rule_matches(rule: dict, user: str, model: str, max_tokens: int) -> bool:
+    return (
+        rule.get("contains", "") in user
+        and rule.get("model", model) == model
+        and max_tokens >= int(rule.get("min_max_tokens", 0))
+    )
 
 
 def _json(body: bytes) -> dict:

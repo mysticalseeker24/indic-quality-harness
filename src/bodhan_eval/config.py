@@ -139,9 +139,12 @@ class Settings:
     llm_base_url: str | None = None
     llm_model: str | None = None
     llm_api_key: str | None = None
-    concurrency: int = 6
+    concurrency: int = 6  # the maximum per service; the adaptive limit moves below it (K11)
     request_timeout_s: float = 90.0
-    max_retries: int = 5
+    max_retries: int = 5  # attempts per request, the first one included
+    retry_base_s: float = field(default_factory=lambda: float(defaults()["clients"]["retry_base_s"]))
+    retry_max_wait_s: float = field(default_factory=lambda: float(defaults()["clients"]["retry_max_wait_s"]))
+    aimd_increase_after: int = field(default_factory=lambda: int(defaults()["clients"]["aimd_increase_after"]))
     extra: dict = field(default_factory=dict)
 
     @classmethod

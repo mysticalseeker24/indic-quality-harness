@@ -109,7 +109,7 @@ def test_chat_completions_openai_shape(stub: StubServer) -> None:
     out = r.json()
     assert out["choices"][0]["message"]["content"] == '{"errors": []}'
     assert out["usage"]["prompt_tokens"] >= 0
-    assert stub.requests[-1]["response_format"] is True
+    assert stub.requests[-1]["response_format"] == "json_object"
 
 
 def test_faults_fire_the_requested_number_of_times(stub: StubServer) -> None:

@@ -330,6 +330,8 @@ def write_run_meta(out: Path, result: RunResult, runtime_s: float) -> None:
             "paid_calls": dict(sorted(b.calls.items())),
             "cache_hits": dict(sorted(b.cache_hits.items())),
             "refused_by_budget": dict(sorted(b.refused.items())),
+            "llm_provider_cost_usd": round(b.llm_cost_usd, 6),  # as reported by the provider (e.g. OpenRouter)
+            "llm_response_formats": result.llm_formats,
             "max_cost_inr": result.options.max_cost_inr,
             "generation": result.generation,
         },
