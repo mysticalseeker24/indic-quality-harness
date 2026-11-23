@@ -68,6 +68,9 @@ class RunOptions:
     thresholds: Path | None = None
     judge: bool = True
     judge_replicas: int | None = None
+    judge_max_replicas: int | None = None
+    judge_models: list[str] | None = None  # jury on the LLM endpoint; None = LLM_MODEL alone
+    judge_repeat_sample: float | None = None
     speech: bool = True
     speech_sample: float | None = None
     voices: dict[str, str] = field(default_factory=dict)
@@ -200,8 +203,16 @@ def _context(opts: RunOptions) -> RunContext:
     cache = Cache(opts.cache_dir)
     budget = Budget(opts.max_cost_inr)
     judge_cfg = dict(defaults()["judge"])
-    if opts.judge_replicas is not None:
-        judge_cfg["replicas"] = opts.judge_replicas
+    for key, value in (
+        ("replicas", opts.judge_replicas),
+        ("max_replicas", opts.judge_max_replicas),
+        ("models", opts.judge_models),
+        ("repeat_sample", opts.judge_repeat_sample),
+    ):
+        if value is not None:
+            judge_cfg[key] = value
+    if opts.judge_models and not settings.llm_model:
+        settings.llm_model = opts.judge_models[0]  # a jury needs no LLM_MODEL of its own
     return RunContext(
         params=dict(defaults()["check_params"]),
         judge_cfg=judge_cfg,

@@ -19,8 +19,8 @@ Responses come from lookup tables in a fixture JSON:
       "transliterate": {"<language>": {"<text>": "<rendering>"}},
       "transcribe":    {"<language>": "<transcript>"},
       "chat":          [{"contains": "<substring of the last user message>", "content": "<assistant text>",
-                         "model": "<only this model>", "min_max_tokens": 3000,
-                         "finish_reason": "length", "cost": 0.0012}],
+                         "starts_with": "<prefix>", "model": "<only this model>", "min_max_tokens": 3000,
+                         "finish_reason": "length", "cost": 0.0012, "times": 2}],
       "chat_unsupported_formats": {"<model or *>": ["json_schema", "json_object"]},
       "faults":        [{"path": "/translate", "status": 429, "times": 2, "retry_after": "0.01"}]
     }
@@ -113,6 +113,17 @@ class StubState:
     requests: list[dict] = field(default_factory=list)  # {"path", "status", **details}
     misses: list[dict] = field(default_factory=list)  # requests answered by a default
     lock: threading.Lock = field(default_factory=threading.Lock)
+    rule_uses: dict[int, int] = field(default_factory=dict)  # chat rule index -> times it answered
+
+    def take_chat_rule(self, user: str, model: str, max_tokens: int) -> dict | None:
+        """The first chat rule that matches and has answers left (a rule with ``times`` answers that often)."""
+        with self.lock:
+            for k, rule in enumerate(self.fixture.get("chat", [])):
+                used = self.rule_uses.get(k, 0)
+                if _chat_rule_matches(rule, user, model, max_tokens) and not (0 <= rule.get("times", -1) <= used):
+                    self.rule_uses[k] = used + 1
+                    return rule
+        return None
 
     def log(self, path: str, status: int, **details: Any) -> None:
         with self.lock:
@@ -264,10 +275,7 @@ class _Handler(BaseHTTPRequestHandler):
         messages = req.get("messages") or []
         user = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
         max_tokens = int(req.get("max_tokens") or 0)
-        rule = next(
-            (r for r in self.server.state.fixture.get("chat", []) if _chat_rule_matches(r, user, model, max_tokens)),
-            None,
-        )
+        rule = self.server.state.take_chat_rule(user, model, max_tokens)
         if rule is None:
             rule = {"content": '{"errors": []}'}
             self.server.state.miss("chat", model=model)
@@ -298,6 +306,7 @@ class _Handler(BaseHTTPRequestHandler):
             "max_tokens": max_tokens,
             "extra": {k: v for k, v in req.items() if k not in OPENAI_CHAT_FIELDS},
             "body_hash": hashlib.sha256(body).hexdigest(),
+            "user": user,
         }
         return 200, "application/json", _dumps(resp), details
 
@@ -358,6 +367,7 @@ class _Handler(BaseHTTPRequestHandler):
 def _chat_rule_matches(rule: dict, user: str, model: str, max_tokens: int) -> bool:
     return (
         rule.get("contains", "") in user
+        and user.startswith(rule.get("starts_with", ""))
         and rule.get("model", model) == model
         and max_tokens >= int(rule.get("min_max_tokens", 0))
     )

@@ -239,20 +239,31 @@ def per_check(results: list[ItemResult], min_score: float = 0.3) -> dict:
 
 
 def judge_consistency(results: list[ItemResult]) -> dict:
-    n = agree_bin = agree_cat = 0
+    """Order consistency (first two replicas, re-ordered prompts), tie-break rate, and repeat consistency
+    (the identical prompt sent twice, on a sample) reported separately: they measure different things."""
+    n = agree_bin = agree_cat = judged = tie_breaks = rep_n = rep_agree = 0
     per_lang: defaultdict[str, list[int]] = defaultdict(lambda: [0, 0])
     for r in results:
-        if "judge_agree_binary" in r.metrics:
+        m = r.metrics
+        if "judge_replicas" in m:
+            judged += 1
+            tie_breaks += bool(m.get("judge_tie_break"))
+        if "judge_agree_binary" in m:
             n += 1
-            agree_bin += bool(r.metrics["judge_agree_binary"])
-            agree_cat += bool(r.metrics["judge_agree_categories"])
+            agree_bin += bool(m["judge_agree_binary"])
+            agree_cat += bool(m["judge_agree_categories"])
             per_lang[r.item.lang][0] += 1
-            per_lang[r.item.lang][1] += bool(r.metrics["judge_agree_categories"])
+            per_lang[r.item.lang][1] += bool(m["judge_agree_categories"])
+        if "judge_repeat_agree" in m:
+            rep_n += 1
+            rep_agree += bool(m["judge_repeat_agree"])
     return {
         "items": n,
         "same_verdict_rate": _ratio(agree_bin, n),
         "same_categories_rate": _ratio(agree_cat, n),
         "per_language": {k: _ratio(v[1], v[0]) for k, v in sorted(per_lang.items())},
+        "tie_break_rate": _ratio(tie_breaks, judged),
+        "repeat": {"items": rep_n, "same_categories_rate": _ratio(rep_agree, rep_n)},
     }
 
 

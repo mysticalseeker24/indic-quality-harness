@@ -59,6 +59,20 @@ def _positive_int(value: str) -> int:
     return n
 
 
+def _share(value: str) -> float:
+    x = float(value)
+    if not 0.0 <= x <= 1.0:
+        raise argparse.ArgumentTypeError("must be in [0, 1]")
+    return x
+
+
+def _model_list(value: str) -> list[str]:
+    models = [m.strip() for m in value.split(",") if m.strip()]
+    if not models:
+        raise argparse.ArgumentTypeError("needs at least one model id")
+    return list(dict.fromkeys(models))  # drop repeats, keep order
+
+
 def _json_object(value: str) -> dict:
     try:
         obj = json.loads(value)
@@ -99,6 +113,23 @@ def build_parser() -> argparse.ArgumentParser:
     judge.add_argument("--no-judge", action="store_true", help="skip the LLM judge")
     judge.add_argument(
         "--judge-replicas", type=_positive_int, help="judge replicas per item (default from defaults.json)"
+    )
+    judge.add_argument(
+        "--judge-max-replicas",
+        type=_positive_int,
+        help="replicas allowed per item when the first ones disagree (tie-break; default 3)",
+    )
+    judge.add_argument(
+        "--judge-models",
+        type=_model_list,
+        metavar="A,B,C",
+        help="jury: comma-separated models on the same LLM endpoint, each votes once (default: LLM_MODEL alone)",
+    )
+    judge.add_argument(
+        "--judge-repeat-sample",
+        type=_share,
+        help="share of items whose first judge prompt is re-sent unchanged to measure repeat-consistency "
+        "(0 = off; default 0.1)",
     )
     judge.add_argument(
         "--llm-inr-per-1k-tokens",
@@ -143,6 +174,9 @@ def options_from_args(args: argparse.Namespace) -> RunOptions:
         thresholds=args.thresholds,
         judge=not args.no_judge,
         judge_replicas=args.judge_replicas,
+        judge_max_replicas=args.judge_max_replicas,
+        judge_models=args.judge_models,
+        judge_repeat_sample=args.judge_repeat_sample,
         speech=not args.no_speech,
         speech_sample=args.speech_sample,
         voices=dict(args.voice),
