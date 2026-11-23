@@ -32,7 +32,8 @@ class Cache:
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "blobs").mkdir(exist_ok=True)
         self._lock = threading.Lock()
-        self._db = sqlite3.connect(self.root / "cache.sqlite3", check_same_thread=False)
+        # timeout: wait for another process (a parallel run sharing the cache) instead of failing on its lock
+        self._db = sqlite3.connect(self.root / "cache.sqlite3", check_same_thread=False, timeout=30)
         self._db.execute(
             "CREATE TABLE IF NOT EXISTS entries (key TEXT PRIMARY KEY, kind TEXT, value TEXT, cost_inr REAL)"
         )

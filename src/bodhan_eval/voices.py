@@ -19,6 +19,7 @@ import json
 import logging
 import statistics
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -113,8 +114,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 audio_dir = args.out / "audio" / voice
                 audio_dir.mkdir(parents=True, exist_ok=True)
                 clips = [Item(id=it.id, lang=lang, source=it.source, translation=it.translation) for it in chosen]
-                for it in clips:
-                    it.audio = synthesize(it, ctx, audio_dir)
+                with ThreadPoolExecutor(max_workers=opts.concurrency) as pool:  # the client's limiter still applies
+                    for it, path in zip(clips, pool.map(synthesize, clips, [ctx] * len(clips), [audio_dir] * len(clips))):
+                        it.audio = path
                 ctx.stats = prepass_stats(clips, ctx)
                 results = [ItemResult(item=it) for it in clips]
                 _run_items(results, [cls() for cls in SPEECH_CHECKS], ctx, opts.concurrency)
