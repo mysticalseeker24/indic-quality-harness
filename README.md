@@ -101,7 +101,7 @@ Every model answered in strict `json_schema`. Tested with Kimi K3.1 Pro (reasoni
 
 **Independent blind exam:** EXAM_RESULTS
 
-**Voices:** VOICE_RESULTS
+**Voices** (`python -m bodhan_eval.voices`, 15 demo texts per language, every voice speaks the same text, ₹11.8; [sample_report/voices.md](sample_report/voices.md)): the two voices of each language get flagged on the same items (paired difference at most 1 item: hi Kavya/Amit 3/3, ta Anitha/Arun 5/4, bn Ishita/Sourav 3/2), with transcript CER within 3 points; Arun speaks fastest (16.5 characters/s against about 13.5). The speech errors come from the text front end (brackets, numbers), not from the voice.
 
 ## Sample report
 
