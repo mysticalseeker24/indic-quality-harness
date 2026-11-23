@@ -168,6 +168,17 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:  # silence per-request stderr lines
         return
 
+    def do_GET(self) -> None:
+        """``GET .../models``: the model listing with prices, as OpenRouter publishes it (fixture key ``models``)."""
+        state = self.server.state
+        path = self.path.split("?", 1)[0]
+        if path.endswith("/models"):
+            state.log(path, 200, method="GET")
+            self._send(200, "application/json", _dumps({"data": state.fixture.get("models", [])}))
+            return
+        state.log(path, 404, method="GET")
+        self._error(404, "not_found", f"no stub route for GET {path}")
+
     def do_POST(self) -> None:
         state = self.server.state
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0))

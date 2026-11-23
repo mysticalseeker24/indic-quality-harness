@@ -28,7 +28,8 @@ class Budget:
         self.calls: dict[str, int] = defaultdict(int)
         self.cache_hits: dict[str, int] = defaultdict(int)
         self.reserved = 0.0
-        self.llm_tokens = {"prompt": 0, "completion": 0}
+        self.llm_tokens = {"prompt": 0, "completion": 0}  # of every answer used, cached or not
+        self.llm_fresh_tokens = {"prompt": 0, "completion": 0}  # of answers paid for in this run
         self.llm_cost_usd = 0.0  # what the LLM provider reported charging in this run (cache misses only), if it does
         self.refused: dict[str, int] = defaultdict(int)
         self._local = threading.local()  # per-thread cache-hit count, so the event log can attribute hits to a check
@@ -75,10 +76,13 @@ class Budget:
         with self._lock:
             return self.max_inr - self.total_spent - self.reserved
 
-    def add_llm_tokens(self, prompt: int, completion: int) -> None:
+    def add_llm_tokens(self, prompt: int, completion: int, fresh: bool = False) -> None:
         with self._lock:
             self.llm_tokens["prompt"] += prompt
             self.llm_tokens["completion"] += completion
+            if fresh:
+                self.llm_fresh_tokens["prompt"] += prompt
+                self.llm_fresh_tokens["completion"] += completion
 
     def add_llm_cost_usd(self, usd: float) -> None:
         with self._lock:

@@ -448,6 +448,7 @@ class _Answer:
     prompt_tokens: int
     completion_tokens: int
     cost_usd: float | None  # what the provider says it charged (OpenRouter's usage.cost), if it says
+    fmt: str = "plain"  # the response format the answer came back in
 
 
 class LLMClient:
@@ -536,6 +537,9 @@ class LLMClient:
             value, cost = hit
             self.budget.record_cache_hit("llm", cost)
             self.budget.add_llm_tokens(value.get("prompt_tokens", 0), value.get("completion_tokens", 0))
+            if value.get("format"):  # a cached rerun still reports the format the answer came in
+                with self._lock:
+                    self._used[model] = value["format"]
             return parse_json_object(value["text"])
         ans = self._budgeted(model, messages, max_tokens, schema)
         cost = self._inr(ans)
@@ -548,8 +552,14 @@ class LLMClient:
                 ans.prompt_tokens + again.prompt_tokens,
                 ans.completion_tokens + again.completion_tokens,
                 None,
+                again.fmt,
             )
-        value = {"text": ans.text, "prompt_tokens": ans.prompt_tokens, "completion_tokens": ans.completion_tokens}
+        value = {
+            "text": ans.text,
+            "prompt_tokens": ans.prompt_tokens,
+            "completion_tokens": ans.completion_tokens,
+            "format": ans.fmt,
+        }
         self.cache.put(key, "llm", value, cost)
         return parse_json_object(ans.text)
 
@@ -567,7 +577,7 @@ class LLMClient:
             self.budget.release(estimate)
             raise
         self.budget.settle("llm", estimate, self._inr(ans))
-        self.budget.add_llm_tokens(ans.prompt_tokens, ans.completion_tokens)
+        self.budget.add_llm_tokens(ans.prompt_tokens, ans.completion_tokens, fresh=True)
         if ans.cost_usd is not None:
             self.budget.add_llm_cost_usd(ans.cost_usd)
         return ans
@@ -590,7 +600,7 @@ class LLMClient:
                     self._refused_below[model] = max(self._refused_below.get(model, 0), level)
                     log.warning("%s: using response format %s for the rest of the run", model, fmt)
                 self._used[model] = fmt
-            return _parse_completion(resp)
+            return _parse_completion(resp, fmt)
         raise AssertionError("unreachable")
 
     def _request(self, model: str, messages: list[dict], max_tokens: int, fmt: str, schema: dict | None) -> Any:
@@ -625,7 +635,7 @@ class LLMClient:
         return call_with_retries(once, self.limiter, self.s, f"llm {model}", LLMError)
 
 
-def _parse_completion(resp: Any) -> _Answer:
+def _parse_completion(resp: Any, fmt: str) -> _Answer:
     choices = getattr(resp, "choices", None) or []
     message = getattr(choices[0], "message", None) if choices else None
     text = str(getattr(message, "content", None) or "")
@@ -636,6 +646,7 @@ def _parse_completion(resp: Any) -> _Answer:
         prompt_tokens=int(getattr(u, "prompt_tokens", 0) or 0),
         completion_tokens=int(getattr(u, "completion_tokens", 0) or 0),
         cost_usd=float(cost) if isinstance(cost, (int, float)) else None,
+        fmt=fmt,
     )
 
 

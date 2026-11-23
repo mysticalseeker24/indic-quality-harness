@@ -231,6 +231,13 @@ def test_llm_uses_strict_json_schema_when_given_one(stub: StubServer, cache: Cac
     assert client.format_for("stub-judge") == "json_schema"
 
 
+def test_llm_cached_answer_still_reports_its_format(stub: StubServer, cache: Cache) -> None:
+    llm(stub, cache).chat_json(VERDICT, schema=SCHEMA)
+    rerun = llm(stub, cache)  # a new run on the same cache
+    assert rerun.chat_json(VERDICT, schema=SCHEMA) == {"errors": [], "note": "fine"}
+    assert len(stub.requests) == 1 and rerun.format_for("stub-judge") == "json_schema"
+
+
 def test_llm_json_schema_rejected_falls_back_to_json_object_and_remembers(start_stub, cache: Cache) -> None:
     stub = start_stub({**FIXTURE, "chat_unsupported_formats": {"stub-judge": ["json_schema"]}})
     client = llm(stub, cache)
