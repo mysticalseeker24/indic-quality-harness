@@ -21,7 +21,7 @@ Every Claude Code session reads this first and rewrites "Current state" at each 
 
 ## Open problems
 
-1. **CI** was red since Phase 1 (`rapidfuzz==3.14.6` has no Python 3.10 wheels; tests never ran in CI). Fixed with `rapidfuzz==3.13.0` (D39, Saksham's yes); check the run of the D39 push. The CI `docker` job (build + `--help`) and `cookbook-validator` pass, which verifies the D32 Docker build; local `make docker` still waits for Docker on Saksham's laptop.
+1. **CI** was red since Phase 1 (`rapidfuzz==3.14.6` has no Python 3.10 wheels; tests never ran in CI). Fixed with `rapidfuzz==3.13.0` (D39, Saksham's yes): **CI green** on `e8c9874` (test 3.10, test 3.12 incl. the MP3/ffmpeg test, docker, cookbook-validator). The CI `docker` job (build + `--help`) and `cookbook-validator` pass, which verifies the D32 Docker build; local `make docker` still waits for Docker on Saksham's laptop.
 2. **Keys:** all five key values appear in three earlier Claude Code transcripts of this project (23 Nov); none in git or repo files. Rotation recommended (Saksham plans it after submission).
 
 ## Known issues still open
