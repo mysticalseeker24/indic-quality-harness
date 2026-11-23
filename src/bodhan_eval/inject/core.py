@@ -42,7 +42,7 @@ from ..config import CATEGORIES, Settings, canonical_category
 from ..dataset import load_dataset
 from ..generate import synthesize
 from ..models import Item, Label
-from . import english, text
+from . import english, speech, text
 from .base import Edit, InjectContext
 
 log = logging.getLogger("bodhan_eval.inject")
@@ -85,6 +85,12 @@ METHODS: list[Method] = [
     Method("english_sentence", "wrong_language", "major", "text", text.english_sentence),
     Method("source_english", "wrong_language", "critical", "text", text.source_english),
     Method("other_language", "wrong_language", "critical", "text", text.other_language),
+    Method("truncate_tail", "speech_omission", "critical", "audio", speech.truncate_tail),
+    Method("cut_middle", "speech_omission", "major", "audio", speech.cut_middle),
+    Method("repeat_stretch", "speech_repetition", "major", "audio", speech.repeat_stretch),
+    Method("insert_silence", "speech_garbled", "minor", "audio", speech.insert_silence),
+    Method("noise_burst", "speech_garbled", "major", "audio", speech.noise_burst),
+    Method("clip_region", "speech_garbled", "major", "audio", speech.clip_region),
 ]
 
 
