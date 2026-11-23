@@ -463,6 +463,24 @@ def test_item_rng_depends_on_seed_id_and_lang() -> None:
     assert a != item_rng(7, it(), "drop_phrase").random()
 
 
+@pytest.mark.parametrize("fmt", ["csv", "jsonl"])
+def test_skip_copies_listed_items_through_unlabelled(tmp_path: Path, fmt: str) -> None:
+    """Items a human is reviewing stay exactly as generated, with no labels, until the review's labels arrive."""
+    if fmt == "csv":
+        skip = tmp_path / "review.csv"
+        skip.write_text("﻿id,lang,source\nganga,hi,x\nmd,hi,y\n", encoding="utf-8")
+    else:
+        skip = write_jsonl(tmp_path / "skip.jsonl", [{"id": "ganga", "lang": "hi"}, {"id": "md", "lang": "hi"}])
+    out = run_cli(tmp_path, ROWS, "--rate", "1", "--skip", str(skip))
+    by_key = {(r["id"], r["lang"]): r for r in out}
+    for key in (("ganga", "hi"), ("md", "hi")):
+        assert by_key[key]["translation"] == next(r["translation"] for r in ROWS if (r["id"], r["lang"]) == key)
+        assert "labels" not in by_key[key]
+    assert by_key[("ganga", "ta")]["labels"]  # same id, other language: not skipped
+    summary = json.loads((tmp_path / "out.inject.json").read_text(encoding="utf-8"))
+    assert summary["skipped"] == 2 and summary["items"] == len(ROWS)
+
+
 def test_rate_zero_labels_everything_clean(tmp_path: Path) -> None:
     out = run_cli(tmp_path, ROWS, "--rate", "0")
     assert all(r["labels"] == [] for r in out)

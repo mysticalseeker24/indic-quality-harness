@@ -10,7 +10,8 @@ choices from (seed, id, lang, method), so one method failing never shifts anothe
 fate never depends on the order of the file. One error per item; the label carries the method's category and
 severity and ``"annotator": "injector:<method>"``.
 
-Items that already have labels (for example Saksham's) are copied through untouched. When a translation
+Items that already have labels (for example Saksham's) are copied through untouched, and so are the items
+listed in ``--skip`` (e.g. a review sheet still being filled in), which stay unlabelled. When a translation
 changes, the old audio no longer matches it: with ``--with-models`` and ``--audio-out`` it is synthesised
 again with Indic-Speak, otherwise it is dropped (counted in the summary).
 
@@ -20,8 +21,10 @@ Outputs: the JSONL (audio paths relative to it) and ``<out>.inject.json`` with c
 from __future__ import annotations
 
 import argparse
+import csv
 import dataclasses
 import hashlib
+import json
 import logging
 import os
 import random
@@ -38,7 +41,7 @@ from ..budget import Budget, BudgetExceeded
 from ..cache import Cache
 from ..cli import _non_negative, _positive_int, parse_langs, setup_logging
 from ..clients import BodhanClient, BodhanError, ServiceUnavailable
-from ..config import CATEGORIES, Settings, canonical_category
+from ..config import CATEGORIES, Settings, canonical_category, normalize_lang_code
 from ..dataset import load_dataset
 from ..generate import synthesize
 from ..models import Item, Label
@@ -115,15 +118,23 @@ def usable(m: Method, item: Item, ctx: InjectContext, categories: set[str] | Non
 @dataclass
 class Outcome:
     row: dict
-    status: str  # clean | injected | passed_through | not_injectable
+    status: str  # clean | injected | passed_through | not_injectable | skipped
     method: Method | None = None
     audio: str = ""  # edited | resynthesised | dropped | "" (unchanged or none)
     tried: list[str] = field(default_factory=list)
 
 
 def inject_item(
-    item: Item, ctx: InjectContext, seed: int, rate: float, categories: set[str] | None, out_dir: Path
+    item: Item,
+    ctx: InjectContext,
+    seed: int,
+    rate: float,
+    categories: set[str] | None,
+    out_dir: Path,
+    skip: frozenset[str] = frozenset(),
 ) -> Outcome:
+    if item.key in skip:  # under human review: copied as generated, unlabelled until the review's labels arrive
+        return Outcome(_row(item, None, out_dir), "skipped")
     if item.labels:
         return Outcome(_row(item, [_label_dict(lab) for lab in item.labels], out_dir), "passed_through")
     rng = item_rng(seed, item)
@@ -201,12 +212,24 @@ def _rel(path: str | None, base: Path) -> str | None:
         return Path(path).as_posix()
 
 
-def _row(item: Item, labels: list[dict], out_dir: Path) -> dict:
+def _row(item: Item, labels: list[dict] | None, out_dir: Path) -> dict:
     row: dict = {"id": item.id, "lang": item.lang, "source": item.source}
     if item.reference is not None:
         row["reference"] = item.reference
-    row.update(translation=item.translation, audio=_rel(item.audio, out_dir), labels=labels)
+    row.update(translation=item.translation, audio=_rel(item.audio, out_dir))
+    if labels is not None:
+        row["labels"] = labels
     return row
+
+
+def read_skip(path: Path) -> frozenset[str]:
+    """``id::lang`` keys from a CSV (e.g. a review sheet) or JSONL file with ``id`` and ``lang``."""
+    if path.suffix.lower() == ".csv":
+        with path.open(encoding="utf-8-sig", newline="") as fh:
+            rows = list(csv.DictReader(fh))
+    else:
+        rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+    return frozenset(f"{r['id']}::{normalize_lang_code(str(r['lang']))}" for r in rows if r.get("id") and r.get("lang"))
 
 
 def summarize(outcomes: list[Outcome], args: argparse.Namespace) -> dict:
@@ -223,6 +246,7 @@ def summarize(outcomes: list[Outcome], args: argparse.Namespace) -> dict:
         "injected": statuses["injected"],
         "passed_through": statuses["passed_through"],
         "not_injectable": statuses["not_injectable"],
+        "skipped": statuses["skipped"],
         "per_category": dict(Counter(o.method.category for o in injected if o.method)),
         "per_method": dict(Counter(o.method.name for o in injected if o.method)),
         "per_severity": dict(Counter(o.method.severity for o in injected if o.method)),
@@ -267,6 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--langs", type=parse_langs, default=None, help="only these languages (default: all)")
     ap.add_argument("--categories", type=_categories, default=None, help="only these categories (default: all)")
     ap.add_argument("--audio-out", type=Path, help="folder for edited and re-synthesised audio (speech errors)")
+    ap.add_argument("--skip", type=Path, help="CSV/JSONL of id+lang to copy through untouched and unlabelled")
     ap.add_argument("--with-models", action="store_true", help="also use Indic-Translate/-Transliterate/-Speak")
     ap.add_argument("--max-cost-inr", type=_non_negative, default=5.0, help="Bodhan spend cap with --with-models")
     ap.add_argument("--cache-dir", type=Path, default=Path(".cache/bodhan_eval"))
@@ -298,12 +323,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.audio_out:
         args.audio_out.mkdir(parents=True, exist_ok=True)
     ctx = InjectContext(items, bodhan=bodhan, audio_out=args.audio_out)
+    skip = read_skip(args.skip) if args.skip else frozenset()
     out_dir = args.out.resolve().parent
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
         with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
             outcomes = list(
-                pool.map(lambda it: inject_item(it, ctx, args.seed, args.rate, args.categories, out_dir), items)
+                pool.map(lambda it: inject_item(it, ctx, args.seed, args.rate, args.categories, out_dir, skip), items)
             )
     finally:
         if cache is not None:
