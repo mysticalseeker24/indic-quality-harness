@@ -28,8 +28,11 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from .. import audio as A
 from .. import markup
@@ -67,10 +70,115 @@ def speakable_for_tts(text: str) -> str:
     return re.sub(r"\s+", " ", speakable(text)).strip()
 
 
-def _time_to_char(t: float, st: A.AudioStats, n_chars: int) -> int:
-    span = max(1e-6, st.duration_s - st.lead_silence_s - st.trail_silence_s)
-    frac = (t - st.lead_silence_s) / span
-    return int(max(0.0, min(1.0, frac)) * n_chars)
+# ---------------------------------------------------------------------------
+# time -> position in the text (K5)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Anchor:
+    """Audio from t0 to t1 (seconds) speaks the text's characters c0..c1."""
+
+    t0: float
+    t1: float
+    c0: int
+    c1: int
+
+
+@dataclass
+class TimeMap:
+    """Seconds -> character offsets in the text that was spoken.
+
+    Inside an anchor, position follows *speaking* time: only frames with sound count, so a pause (an inserted
+    silence, a slow start) does not drag later positions forward. Without a transcript there is one anchor,
+    the whole clip. With one, every ASR chunk is an anchor: the alignment found its words in the text, so its
+    time range maps to exactly those characters, whatever the speaking rate in the rest of the clip.
+    """
+
+    text: str
+    anchors: list[Anchor]
+    active: np.ndarray  # per 20 ms frame: sound or not
+    method: str  # "proportional" | "asr_anchors"
+
+    def char_at(self, t: float) -> int:
+        if not self.anchors:
+            return 0
+        if t <= self.anchors[0].t0:
+            return self.anchors[0].c0
+        if t >= self.anchors[-1].t1:
+            return self.anchors[-1].c1
+        a = next(a for a in self.anchors if t < a.t1)
+        f0, f1, ft = (int(v / A.FRAME_S) for v in (a.t0, a.t1, t))
+        total = int(self.active[f0:f1].sum())
+        frac = int(self.active[f0:ft].sum()) / total if total else (ft - f0) / max(1, f1 - f0)
+        return a.c0 + round(frac * (a.c1 - a.c0))
+
+    def span(self, t0: float, t1: float) -> tuple[int, int]:
+        """Character span for a stretch of audio, widened to whole words (at least one)."""
+        a, b = self.char_at(t0), self.char_at(t1)
+        return _snap(self.text, min(a, b), max(a, b))
+
+
+def _word_bounds(text: str) -> tuple[int, int]:
+    toks = word_tokens(speakable(text))
+    return (toks[0].start, toks[-1].end) if toks else (0, len(text))
+
+
+def proportional_map(x: np.ndarray, sr: int, text: str) -> TimeMap:
+    """One anchor for the whole clip: used by the waveform check, which runs before any transcript exists."""
+    c0, c1 = _word_bounds(text)
+    return TimeMap(text, [Anchor(0.0, len(x) / sr, c0, c1)], A.active_mask(x, sr), "proportional")
+
+
+def anchored_map(
+    x: np.ndarray,
+    sr: int,
+    text: str,
+    ref_toks: list,
+    ref: list[str],
+    hyp: list[str],
+    hyp_chunk: list[int],
+    plan: list[tuple[int, int]],
+) -> TimeMap:
+    """One anchor per ASR chunk: a chunk spans the text from its first aligned word to the next chunk's.
+
+    Text words the transcript missed join the chunk before them; assignments only move forward, so the
+    anchors stay in order. Falls back to the proportional map when nothing aligned.
+    """
+    chunk_of: list[int | None] = [None] * len(ref)
+    for tag, i1, i2, j1, j2 in word_alignment(ref, hyp):
+        if tag in ("equal", "replace"):
+            for k, j in zip(range(i1, i2), range(j1, j2)):
+                chunk_of[k] = hyp_chunk[j]
+    known = [c for c in chunk_of if c is not None]
+    if not known or not ref_toks:
+        return proportional_map(x, sr, text)
+    filled, last = [], known[0]
+    for c in chunk_of:
+        last = max(last, c) if c is not None else last
+        filled.append(last)
+    firsts: list[int | None] = [
+        next((ref_toks[k].start for k, c in enumerate(filled) if c == i), None) for i in range(len(plan))
+    ]
+    firsts[0] = ref_toks[0].start
+    end: int = ref_toks[-1].end
+    anchors: list[Anchor] = []
+    for i, (a, b) in enumerate(plan):
+        own = firsts[i]
+        c0: int = own if own is not None else anchors[-1].c1  # a chunk with no words: zero width
+        later = [f for f in firsts[i + 1 :] if f is not None]
+        c1: int = later[0] if later else end
+        anchors.append(Anchor(a / sr, b / sr, c0, max(c0, c1)))
+    return TimeMap(text, anchors, A.active_mask(x, sr), "asr_anchors")
+
+
+def relocate(r: ItemResult, tm: TimeMap) -> None:
+    """Re-place the waveform check's time-stamped findings once the transcript gives anchors."""
+    for s in r.signals:
+        t = s.details.get("time_s")
+        if s.check == "audio_stats" and t:
+            s.span = tm.span(t[0], t[1])
+            s.details["located_by"] = tm.method
 
 
 def _snap(text: str, a: int, b: int) -> tuple[int, int]:
@@ -117,18 +225,23 @@ class AudioStatsCheck(Check):
                 span=(0, n) if n else None,
             )
             return
+        # Findings carry their time; the span is a first guess that the asr check re-places with anchors (K5).
+        tm = proportional_map(x, sr, text) if n else None
+
+        def where(a: float, b: float) -> dict[str, Any]:
+            return {"time_s": [round(a, 2), round(b, 2)], "located_by": "proportional"}
+
         ls = st.longest_silence
         if ls and ls[1] - ls[0] >= p["audio_long_silence_s"]:
             gap = ls[1] - ls[0]
-            span = _snap(text, *(2 * [_time_to_char((ls[0] + ls[1]) / 2, st, n)])) if n else None
             self.signal(
                 r,
                 "speech_garbled",
                 min(0.85, 0.55 + 0.1 * (gap - p["audio_long_silence_s"])),
                 f"Silence of {gap:.1f} s inside the speech at {ls[0]:.1f}-{ls[1]:.1f} s",
                 severity="major",
-                span=span,
-                details={"time_s": [round(ls[0], 2), round(ls[1], 2)]},
+                span=tm.span(*ls) if tm else None,
+                details=where(*ls),
             )
         for edge, length in (("leading", st.lead_silence_s), ("trailing", st.trail_silence_s)):
             if length >= p["audio_edge_silence_s"]:
@@ -143,26 +256,24 @@ class AudioStatsCheck(Check):
                 )
         if st.clip_ratio >= p["audio_clip_ratio"]:
             a, b = st.clip_regions[0] if st.clip_regions else (0.0, st.duration_s)
-            span = (_time_to_char(a, st, n), max(_time_to_char(b, st, n), _time_to_char(a, st, n) + 1)) if n else None
             self.signal(
                 r,
                 "speech_garbled",
                 min(0.9, 0.6 + 20 * st.clip_ratio),
                 f"Clipping: {st.clip_ratio:.2%} of samples at full scale (first at {a:.1f} s)",
                 severity="major",
-                span=_snap(text, *span) if span else None,
-                details={"clip_regions_s": [[round(u, 2), round(v, 2)] for u, v in st.clip_regions[:5]]},
+                span=tm.span(a, b) if tm else None,
+                details={**where(a, b), "clip_regions_s": [[round(u, 2), round(v, 2)] for u, v in st.clip_regions[:5]]},
             )
         for a, b in st.noise_runs[:3]:
-            span = _snap(text, _time_to_char(a, st, n), _time_to_char(b, st, n)) if n else None
             self.signal(
                 r,
                 "speech_garbled",
                 min(0.85, 0.6 + 0.2 * (b - a)),
                 f"{b - a:.1f} s of broadband noise at {a:.1f}-{b:.1f} s",
                 severity="major",
-                span=span,
-                details={"time_s": [round(a, 2), round(b, 2)]},
+                span=tm.span(a, b) if tm else None,
+                details=where(a, b),
             )
         if text:
             rate, k = _rate(ctx, r.item.lang)
@@ -197,28 +308,35 @@ class AsrCheck(Check):
     def applies(self, r, ctx):
         return bool(r.item.audio and r.item.translation)
 
-    def _transcribe(self, ctx, x, sr, plan, lang) -> str:
-        parts = []
-        for a, b in plan:
-            parts.append(ctx.bodhan.transcribe(A.wav_bytes(x[a:b], sr), lang))
-        return " ".join(p for p in parts if p)
+    def _transcribe(self, ctx, x, sr, plan, lang) -> tuple[str, list[str], list[int]]:
+        """(raw transcript, normalised words, chunk index of each word): one request per chunk."""
+        texts, words, chunk_of = [], [], []
+        for i, (a, b) in enumerate(plan):
+            t = ctx.bodhan.transcribe(A.wav_bytes(x[a:b], sr), lang)
+            texts.append(t)
+            ws = [normalize_text(w.text, asr_fold=True) for w in word_tokens(t)]
+            words += ws
+            chunk_of += [i] * len(ws)
+        return " ".join(t for t in texts if t), words, chunk_of
 
     def run(self, r: ItemResult, ctx) -> None:
         info = lang_info(r.item.lang)
         text = self.translation(r)
+        p = ctx.params
         x, sr = ctx.load_audio(r.item.audio)
-        hyp = self._transcribe(ctx, x, sr, A.chunk_plan(x, sr), info.asr_lang)
-        r.state["transcript"] = hyp
         spk = speakable(text)
         ref_toks = word_tokens(spk)
         if not ref_toks:
             raise SkipCheck("no speakable words in the text")
+        plan = A.chunk_plan(x, sr, p["asr_chunk_target_s"], p["asr_chunk_max_s"])
+        hyp, hyp_words, hyp_chunk = self._transcribe(ctx, x, sr, plan, info.asr_lang)
+        r.state["transcript"] = hyp
         ref = [normalize_text(t.text, asr_fold=True) for t in ref_toks]
-        hyp_words = [normalize_text(t.text, asr_fold=True) for t in word_tokens(hyp)]
         cer = char_error_rate(" ".join(ref), " ".join(hyp_words))
         r.metrics["asr_cer"] = round(cer, 4)
         r.metrics["asr_words"] = len(hyp_words)
-        p = ctx.params
+        r.metrics["asr_chunks"] = len(plan)
+        relocate(r, anchored_map(x, sr, text, ref_toks, ref, hyp_words, hyp_chunk, plan))
         cands = self._candidates(r, ctx, text, ref_toks, ref, hyp_words, damp=1.0)
         # Garbled = poor match *outside* the contiguous gaps already explained as omission/repetition,
         # so a clean truncation is not double-reported as unintelligible speech.
@@ -242,9 +360,8 @@ class AsrCheck(Check):
                 c["score"] *= 0.5  # alignment gaps are unreliable when the whole transcript is poor
         if not cands:
             return
-        alt_plan = A.alt_chunk_plan(x, sr)
-        alt_hyp = self._transcribe(ctx, x, sr, alt_plan, info.asr_lang)
-        alt_words = [normalize_text(t.text, asr_fold=True) for t in word_tokens(alt_hyp)]
+        alt_plan = A.alt_chunk_plan(x, sr, plan, p["asr_chunk_max_s"])
+        _, alt_words, _ = self._transcribe(ctx, x, sr, alt_plan, info.asr_lang)
         alt_ok = self._matched_mask(ref, alt_words)
         alt_counts = Counter(zip(alt_words, alt_words[1:], alt_words[2:]))
         ratio = r.state.get("duration_ratio")

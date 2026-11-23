@@ -25,6 +25,8 @@
     "asr_repeat_similarity": 0.75,
     "asr_garbled_cer": 0.55,
     "asr_second_opinion_recovery": 0.6,
+    "asr_chunk_target_s": 10,
+    "asr_chunk_max_s": 29,
     "audio_long_silence_s": 1.2,
     "audio_edge_silence_s": 2.0,
     "audio_clip_ratio": 0.002,

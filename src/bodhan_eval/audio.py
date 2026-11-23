@@ -142,6 +142,19 @@ class AudioStats:
         }
 
 
+def silence_threshold(db: np.ndarray) -> float:
+    """dB below which a frame counts as silence: 30 dB under this clip's own speech level (floor -60 dBFS)."""
+    return max(-60.0, float(np.percentile(db, 90)) - 30.0)
+
+
+def active_mask(x: np.ndarray, sr: int) -> np.ndarray:
+    """Per 20 ms frame: True where there is sound."""
+    if len(x) == 0:
+        return np.zeros(0, dtype=bool)
+    db = frame_db(x, sr)
+    return db >= silence_threshold(db)
+
+
 def analyse(x: np.ndarray, sr: int) -> AudioStats:
     db = frame_db(x, sr)
     dur = len(x) / sr
@@ -149,8 +162,7 @@ def analyse(x: np.ndarray, sr: int) -> AudioStats:
         return AudioStats(0.0, -120.0, -120.0, 0.0, 0.0, 0.0)
     speech_level = float(np.percentile(db, 90))
     noise_floor = float(np.percentile(db, 10))
-    thr = max(-60.0, speech_level - 30.0)
-    silent = db < thr
+    silent = db < silence_threshold(db)
     sil_runs = runs(silent)
     lead = sil_runs[0][1] * FRAME_S if sil_runs and sil_runs[0][0] == 0 else 0.0
     trail = (len(db) - sil_runs[-1][0]) * FRAME_S if sil_runs and sil_runs[-1][1] == len(db) else 0.0
@@ -176,38 +188,100 @@ def analyse(x: np.ndarray, sr: int) -> AudioStats:
     )
 
 
-def chunk_plan(x: np.ndarray, sr: int, max_s: float = 29.0, min_s: float = 18.0) -> list[tuple[int, int]]:
-    """Cut points for <= max_s chunks, each cut at the quietest 100 ms inside [min_s, max_s] of the chunk."""
-    n = len(x)
-    if n <= max_s * sr:
-        return [(0, n)]
+SENTENCE_PAUSE_S = 0.25  # a pause at least this long reads as a sentence or clause break
+WORD_GAP_S = 0.08  # the shortest quiet stretch counted as a pause between words
+LONG_CHUNK_MIN_S = 18.0  # long chunks (no pause found, and the second opinion) are 18-29 s
+
+
+def pauses(x: np.ndarray, sr: int, min_s: float = WORD_GAP_S) -> list[tuple[float, float]]:
+    """(centre, length) in seconds of every internal quiet stretch of at least ``min_s``."""
+    if len(x) == 0:
+        return []
     db = frame_db(x, sr)
-    win = 5  # 5 x 20 ms
-    smooth = np.convolve(db, np.ones(win) / win, mode="same")
+    quiet = runs(db < silence_threshold(db))
+    return [
+        ((a + b) / 2 * FRAME_S, (b - a) * FRAME_S)
+        for a, b in quiet
+        if a > 0 and b < len(db) and (b - a) * FRAME_S >= min_s
+    ]
+
+
+def _quietest(x: np.ndarray, sr: int, lo: int, hi: int, avoid: list[int] | None = None, margin: int = 0) -> int:
+    """Sample index of the quietest 100 ms in [lo, hi), keeping ``margin`` samples away from ``avoid`` points."""
+    hop = int(sr * FRAME_S)
+    smooth = np.convolve(frame_db(x, sr), np.ones(5) / 5, mode="same")  # 5 x 20 ms
+    f_lo, f_hi = lo // hop, max(lo // hop + 1, min(len(smooth), hi // hop))
+    window = smooth[f_lo:f_hi].copy()
+    for p in avoid or []:
+        a, b = max(f_lo, (p - margin) // hop), min(f_hi, (p + margin) // hop + 1)
+        if b > a:
+            window[a - f_lo : b - f_lo] = np.inf
+    if not np.isfinite(window).any():  # everything excluded: ignore the avoid list
+        window = smooth[f_lo:f_hi]
+    return (f_lo + int(np.argmin(window))) * hop
+
+
+def chunk_plan(x: np.ndarray, sr: int, target_s: float = 10.0, max_s: float = 29.0) -> list[tuple[int, int]]:
+    """Cut points for ASR requests: at a pause near every ``target_s``, never longer than ``max_s``.
+
+    Short chunks give the transcript more anchors for placing findings in the text (K5); Indic-Transcribe
+    bills per second, so they cost the same. A chunk may stretch toward ``max_s`` where that keeps a sentence
+    whole. In order of preference, the next cut is:
+      1. a sentence pause within ``target_s`` +-40 % (6-14 s), the one closest to ``target_s``;
+      2. the nearest sentence pause up to ``max_s`` (a long chunk beats cutting a sentence);
+      3. a pause between words within 6-14 s;
+      4. the quietest 100 ms between 18 s and ``max_s`` (unbroken sound).
+    """
+    n = len(x)
+    lo_s, hi_s = 0.6 * target_s, 1.4 * target_s
+    if n <= hi_s * sr:
+        return [(0, n)]
+    found = pauses(x, sr)
+
+    def nearest(t0: float, lo: float, hi: float, min_len: float) -> float | None:
+        cands = [c for c, length in found if t0 + lo <= c <= t0 + hi and length >= min_len]
+        return min(cands, key=lambda c: abs(c - (t0 + target_s))) if cands else None
+
     out, pos = [], 0
-    while n - pos > max_s * sr:
-        lo = int((pos / sr + min_s) / FRAME_S)
-        hi = int((pos / sr + max_s) / FRAME_S)
-        k = lo + int(np.argmin(smooth[lo:hi])) if hi > lo else hi
-        cut = k * int(sr * FRAME_S)
+    while n - pos > hi_s * sr:
+        t0 = pos / sr
+        cut_s = nearest(t0, lo_s, hi_s, SENTENCE_PAUSE_S)
+        if cut_s is None:
+            cut_s = nearest(t0, lo_s, max_s, SENTENCE_PAUSE_S)
+        if cut_s is None:
+            cut_s = nearest(t0, lo_s, hi_s, 0.0)
+        if cut_s is None:
+            cut = _quietest(x, sr, pos + int(LONG_CHUNK_MIN_S * sr), pos + int(max_s * sr))
+        else:
+            cut = int(cut_s * sr)
         out.append((pos, cut))
         pos = cut
     out.append((pos, n))
     return out
 
 
-def alt_chunk_plan(x: np.ndarray, sr: int) -> list[tuple[int, int]]:
-    """A different segmentation for a second-opinion transcription."""
+def alt_chunk_plan(
+    x: np.ndarray, sr: int, primary: list[tuple[int, int]], max_s: float = 29.0
+) -> list[tuple[int, int]]:
+    """A different segmentation for the second-opinion transcription.
+
+    Long audio: long chunks (18-29 s) cut at least 1.5 s away from every primary cut, so a word the first
+    transcription lost at a chunk edge sits mid-chunk here. Audio the primary plan cut (14-29 s): one chunk.
+    Short audio (one primary chunk): two chunks, cut at the quietest point in the middle 40 %.
+    """
     n = len(x)
-    if n > 29 * sr:
-        return chunk_plan(x, sr, max_s=21.0, min_s=12.0)
-    if n < 3 * sr:
+    if n > max_s * sr:
+        avoid = [b for _, b in primary[:-1]]
+        out, pos = [], 0
+        while n - pos > max_s * sr:
+            cut = _quietest(x, sr, pos + int(LONG_CHUNK_MIN_S * sr), pos + int(max_s * sr), avoid, int(1.5 * sr))
+            out.append((pos, cut))
+            pos = cut
+        out.append((pos, n))
+        return out
+    if len(primary) > 1 or n < 3 * sr:
         return [(0, n)]
-    db = frame_db(x, sr)
-    mid = len(db) // 2
-    lo, hi = int(mid * 0.6), int(mid * 1.4)
-    k = lo + int(np.argmin(db[lo:hi]))
-    cut = k * int(sr * FRAME_S)
+    cut = _quietest(x, sr, int(0.3 * n), int(0.7 * n))
     return [(0, cut), (cut, n)]
 
 
@@ -217,10 +291,4 @@ def silence(seconds: float, sr: int) -> np.ndarray:
 
 def quiet_points(x: np.ndarray, sr: int, min_gap_s: float = 0.12) -> list[float]:
     """Centres (s) of short pauses, used by the injector to cut at word boundaries."""
-    db = frame_db(x, sr)
-    thr = max(-60.0, float(np.percentile(db, 90)) - 30.0)
-    pts = []
-    for a, b in runs(db < thr):
-        if (b - a) * FRAME_S >= min_gap_s and a > 0 and b < len(db):
-            pts.append((a + b) / 2 * FRAME_S)
-    return pts
+    return [c for c, _ in pauses(x, sr, min_gap_s)]

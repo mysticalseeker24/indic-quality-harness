@@ -17,7 +17,8 @@ Responses come from lookup tables in a fixture JSON:
     {
       "translate":     {"<target_language>": {"<text>": "<translation>" | {"text": ..., "truncated": true}}},
       "transliterate": {"<language>": {"<text>": "<rendering>"}},
-      "transcribe":    {"<language>": "<transcript>"},
+      "transcribe":    {"<language>": "<transcript>" | {"tone_words": ["<word 0>", ...],
+                        "errors": [{"min_s": 8, "max_s": 14, "drop_last_words": 3}]}},
       "chat":          [{"contains": "<substring of the last user message>", "content": "<assistant text>",
                          "starts_with": "<prefix>", "model": "<only this model>", "min_max_tokens": 3000,
                          "finish_reason": "length", "cost": 0.0012, "times": 2}],
@@ -86,6 +87,54 @@ def speech_like(seconds: float, sr: int = SAMPLE_RATE) -> np.ndarray:
 
 def speech_like_wav(text: str) -> bytes:
     return A.wav_bytes(speech_like(max(0.5, len(text) / STUB_CHARS_PER_SECOND)), SAMPLE_RATE)
+
+
+# ---- tone-words: synthetic "speech" the stub can transcribe exactly -------------------------------------
+# Word k of a test vocabulary is a pure tone at TONE_BASE_HZ + k * TONE_STEP_HZ. Tests build audio from word
+# indices (dropping, repeating or garbling words, inserting silence or noise), and the stub's transcription
+# decodes the tones it receives. So chunking, cut points, alignment and the second opinion are all exercised
+# for real, and the transcript of each chunk depends on exactly what that chunk contains.
+TONE_BASE_HZ = 300.0
+TONE_STEP_HZ = 40.0
+
+
+def tone_word(index: int, seconds: float = 0.25, sr: int = SAMPLE_RATE, amp: float = 0.4) -> np.ndarray:
+    t = np.arange(max(1, int(seconds * sr))) / sr
+    envelope = np.sin(np.pi * t / seconds) ** 0.5  # smooth start and end, no clicks
+    return (amp * envelope * np.sin(2 * np.pi * (TONE_BASE_HZ + TONE_STEP_HZ * index) * t)).astype(np.float32)
+
+
+def tone_speech(
+    words: list[int], *, word_s: float = 0.25, gap_s: float = 0.1, edge_s: float = 0.15, sr: int = SAMPLE_RATE
+) -> np.ndarray:
+    """Tone-words separated by short gaps, framed by short silences."""
+    edge = np.zeros(int(edge_s * sr), dtype=np.float32)
+    gap = np.zeros(int(gap_s * sr), dtype=np.float32)
+    parts = [edge]
+    for k, w in enumerate(words):
+        parts += [gap] if k else []
+        parts.append(tone_word(w, word_s, sr))
+    return np.concatenate([*parts, edge])
+
+
+def decode_tone_words(x: np.ndarray, sr: int) -> list[int]:
+    """Word indices of the tone-words in ``x``, in order. Broadband noise is not a word (a real ASR skips it too)."""
+    db = A.frame_db(x, sr)
+    if len(x) == 0 or not np.isfinite(db).any():
+        return []
+    thr = max(-60.0, float(np.percentile(db, 90)) - 30.0)
+    hop = max(1, int(sr * A.FRAME_S))
+    out = []
+    for a, b in A.runs(db >= thr):
+        if b - a < 2:
+            continue
+        seg = x[a * hop : b * hop] * np.hanning((b - a) * hop)
+        mag = np.abs(np.fft.rfft(seg)) + 1e-10
+        if np.exp(np.mean(np.log(mag))) / np.mean(mag) > 0.3:
+            continue  # flat spectrum: noise
+        hz = float(np.argmax(mag)) * sr / len(seg)
+        out.append(round((hz - TONE_BASE_HZ) / TONE_STEP_HZ))
+    return out
 
 
 @dataclass
@@ -260,11 +309,18 @@ class _Handler(BaseHTTPRequestHandler):
             raise _ApiError(400, "invalid_request_error", f"audio is {seconds} s; the limit is 30 s per request")
         lang = form.get("language", b"").decode()
         table = self.server.state.fixture.get("transcribe", {})
-        if lang in table:
-            text = table[lang]
-        else:
+        entry = table.get(lang)
+        if entry is None:
             text = ""
             self.server.state.miss("transcribe", language=lang)
+        elif isinstance(entry, dict):  # tone-word audio: decode what was actually sent (see tone_speech)
+            words = [entry["tone_words"][i] for i in decode_tone_words(x, sr) if 0 <= i < len(entry["tone_words"])]
+            for err in entry.get("errors", []):  # an ASR miss that depends on the request's length
+                if err["min_s"] <= seconds <= err["max_s"]:
+                    words = words[: max(0, len(words) - int(err["drop_last_words"]))]
+            text = " ".join(words)
+        else:
+            text = str(entry)
         return 200, "application/json", _dumps({"text": text}), {"language": lang, "seconds": seconds}
 
     def _chat(self, body: bytes) -> tuple[int, str, bytes, dict]:
