@@ -1,6 +1,6 @@
 """Scorecard: how a finished report does against gold labels, the way a hidden test would score it.
 
-    python -m bodhan_eval.score --report outputs/demo --gold data/demo.jsonl [--exclude data/demo_labels.jsonl]
+    python -m bodhan_eval.score --report outputs/demo --gold data/demo_gold.jsonl [--exclude data/demo_labels.jsonl]
 
 The harness never sees these labels: the run is blind, and this command compares its ``items.jsonl`` with the
 gold file afterwards. Matching is the same as in calibration (``calibrate.match_item``): a label is *detected*
