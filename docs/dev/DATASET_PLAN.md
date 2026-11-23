@@ -12,7 +12,7 @@ Requirement: ≥100 items across Hindi, Tamil and Bengali, built from text we ha
 | Wikipedia / Wikibooks | CC BY-SA 4.0 | ✅ short excerpts with attribution |
 | OpenStax | now CC BY-NC-SA (NonCommercial) | ⚠️ avoid in an Apache-2.0 repo |
 
-**Chosen (D40, Saksham, 23 Nov): plan A.** Saksham lists NCERT chapters (class, subject, chapter); for each, passages come from Wikipedia (CC BY-SA 4.0), real human-written text. No English is drafted by us and no NCERT text enters the repo. Tables and formulas from the articles are kept as Markdown tables and LaTeX.
+**Chosen (D40, Saksham, 23 Nov): plan A.** NCERT chapters (class, subject, chapter; chosen at Saksham's request) set the topics; for each, passages come from Wikipedia (CC BY-SA 4.0), real human-written text. Built: `data/sources_en.jsonl` (60 texts × hi/ta/bn: 21 facts, 15 paragraphs, 9 Markdown, 6 tables, 9 LaTeX), `data/heldout_sources_en.jsonl` (10 texts each in te, mr), `data/SOURCES.md`, `data/sources_meta.json`, `data/LICENSE-DATA.md`. No English is drafted by us and no NCERT text enters the repo. Tables and formulas from the articles are kept as Markdown tables and LaTeX.
 
 Record every non-original item's source, URL and licence in `data/SOURCES.md`; give the data its own notice (`data/LICENSE-DATA.md`: original items CC BY 4.0, excerpts under their source licence).
 
