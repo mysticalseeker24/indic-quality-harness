@@ -119,3 +119,4 @@ def test_split_is_deterministic_and_seeded(tmp_path: Path) -> None:
     assert (data / "demo_labels.jsonl").read_bytes() != first[0]
     summary = json.loads((data / "splits.json").read_text("utf-8"))
     assert summary["calibration"]["items"] == 40 and summary["demo"]["items"] == 120
+    assert summary["demo"]["clean"] == 60 and summary["demo"]["unlabelled"] == 12  # unlabelled is not clean

@@ -108,7 +108,8 @@ def split(args: argparse.Namespace) -> dict[str, Any]:
     def counts(rows: list[dict]) -> dict[str, Any]:
         return {
             "items": len(rows),
-            "clean": sum(1 for r in rows if not r.get("labels")),
+            "clean": sum(1 for r in rows if r.get("labels") == []),
+            "unlabelled": sum(1 for r in rows if r.get("labels") is None),  # e.g. on a review sheet, not yet judged
             "per_language": dict(sorted(Counter(r["lang"] for r in rows).items())),
             "per_category": dict(sorted(Counter(lab["type"] for r in rows for lab in r.get("labels") or []).items())),
         }
