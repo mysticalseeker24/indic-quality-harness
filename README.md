@@ -123,7 +123,7 @@ Weakest spots, as measured: speech repetition and garbled speech (the transcribe
 
 ## Demo video
 
-DEMO_VIDEO
+[Demo video (≤ 5 min): a full run on the demo dataset and a walk through the report](https://github.com/mysticalseeker24/indic-quality-harness/releases/tag/demo-video)
 
 ## Limitations
 
@@ -137,7 +137,7 @@ DEMO_VIDEO
 
 ## Cost and runtime
 
-Per 100 items, checking only (no `--generate`): about **₹8 with speech checks** (transcription ₹7.6, back-translation ₹0.2) and **₹0.2 without**, plus the judge: about **$0.34** with Kimi K3.1 Pro ($0.06 with GPT-6 Luna). Generating the outputs costs extra (speech synthesis ≈ ₹23 per 100 items of ~400 characters). Runtime is bound by Bodhan's rate limits, which the harness waits out instead of dropping checks (D43): 146 exam items plus 20 calibration items (98 with audio) took 37.6 min while another run shared the transcription quota; the time is Bodhan's rate limits (HTTP 429 waits), not computation: the 180-item demo re-run from cache takes about 3 min with fresh judge calls and 12 s without. Reruns from the cache take seconds and cost nothing.
+Per 100 items, checking only (no `--generate`): about **₹8 with speech checks** (transcription ₹7.6, back-translation ₹0.2) and **₹0.2 without**, plus the judge: about **$0.75** with Kimi K3.1 Pro (measured on the exam: $1.24 for 166 items; $0.06 with GPT-6 Luna). Generating the outputs costs extra (speech synthesis ≈ ₹23 per 100 items of ~400 characters). Runtime is bound by Bodhan's rate limits, which the harness waits out instead of dropping checks (D43): 146 exam items plus 20 calibration items (98 with audio) took 37.6 min while another run shared the transcription quota; the time is Bodhan's rate limits (HTTP 429 waits), not computation: the 180-item demo re-run from cache takes about 3 min with fresh judge calls and 12 s without. Reruns from the cache take seconds and cost nothing.
 
 ## AI assistance
 

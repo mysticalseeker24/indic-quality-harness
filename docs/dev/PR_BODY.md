@@ -33,20 +33,47 @@ Only as the tier-2 judge, for meaning errors that rules and round trips cannot s
 
 ## Results
 
-RESULTS_BLOCK
+**Independent blind exam** (built in a separate project with Bodhan models only; never seen by the harness repo; run once; judge Kimi K3.1 Pro): 146 items in hi, ta, bn, te, mr and **gu (never demoed)**, 98 with audio, about half clean.
+
+| Measure | Value |
+|---|---|
+| Labelled errors caught | **91.6 %** (items with an error: 96 %) |
+| False alarms on clean items | **4.2 %** (3 / 71) |
+| Precision / localisation / category correct | 81.5 % / 93.4 % / 98.7 % |
+| Critical / major / minor errors caught | 10 / 10, 94 %, 82 % |
+| Gujarati (never demoed) | 93 % caught, 0 false alarms |
+| Weakest | speech repetition 3 / 6, garbled speech 5 / 7, number-flag precision 57 % |
+
+**Demo set** (180 Bodhan outputs hi/ta/bn from NCERT-style Wikipedia passages, 75 planted errors, scored out of sample): planted errors caught 60 / 61, 0 / 24 clean items flagged, precision 88 %, localisation 84 %, category 96 %; 2-fold cross-validated item recall 85 %, false alarms 0 %.
+
+**Bodhan's own errors found:** of 124 flags on the un-injected outputs, 101 were real (reviewed against their evidence, `data/clean_run_review.jsonl`), 10 more after the speech fixes. The biggest: **Indic-Speak silently skips text in parentheses or brackets** (36 cases; confirmed by a controlled test: same sentence 10.67 s with the bracket, 10.41 s without the bracketed words, 12.54 s with commas). Also "achieved in 2025" → "will be achieved" in all three languages, dropped names and qualifiers, wrong technical terms in Tamil, 12.011 → 12.01, flattened Markdown.
+
+**Judge bake-off** (8 models, 50 labelled items incl. Telugu, $5.76): Kimi K3.1 Pro 96 % recall / 4 % false alarms (default), GPT-6 Luna 96 / 8 %, Gemini 4 Hydrogen 93 / 0 %, Gemini 4 Neon 100 / 12 %, DeepSeek V4.1 Flash 96 / 12 %, Claude Sonnet 5.5 93 / 20 %, GPT-6.2 Sol 100 / 28 %, Llama 3.1 8B 85 / 92 %. Full table in the README.
+
+**Voices:** the two voices of each language get flagged on the same items (±1); the speech errors come from the text front end (brackets, numbers), not the voice.
+
 
 ## Demo video
 
-DEMO_VIDEO
+[Demo video (≤ 5 min)](https://github.com/mysticalseeker24/indic-quality-harness/releases/tag/demo-video): a full run on the demo dataset and a walk through the report.
 
 ## Trade-offs and known limitations
 
-LIMITATIONS_BLOCK
+- Spoken numbers are not verified (a number read out as words is accepted as that number; missing or looping words around it are caught).
+- Speech repetition and garbling the transcriber smooths over are missed (exam: repetition 3 / 6, garbled 5 / 7); a single cut word is not reported.
+- Number flags are the least precise (57 % on the exam); units read out in English in tables can look garbled.
+- Names written as exonyms or translated cannot be matched by transliteration, so a missing name is only a hint and the judge decides.
+- Format localisation: a deleted table divider row is detected but not located.
+- The demo's real-error labels come from an AI review of the harness's own flags (marked `ai-review`), so recall on real errors is not measured there; planted errors and the independent exam measure it.
+- Trade-off: the judge runs on every item with two re-ordered replicas (robust, about $0.75 per 100 items with Kimi, measured on the exam); `--no-judge` or a cheaper model cuts that.
 
 ## Cost and runtime
 
-COST_BLOCK
+Checking only, per 100 items: about ₹8 with speech checks (transcription dominates) and ₹0.2 without, plus the judge (Kimi K3.1 Pro: about $0.75, measured on the exam; GPT-6 Luna about $0.06). The exam (166 items incl. calibration, 98 with audio) cost ₹3.83 + $1.24 and took 37.6 min, bound by Bodhan's rate limits, which the harness waits out instead of dropping checks; reruns from the cache take minutes and cost nothing.
 
 ## AI assistance
 
-AI_BLOCK
+- Design and research: Claude (claude.ai) helped read the assignment and the Bodhan docs, compare check designs, and draft the architecture, test plan and build plan.
+- Implementation: Claude Code wrote code and tests phase by phase against that plan; each phase ended at a gate (`make check` plus acceptance tests).
+- Review and labels: Claude Code reviewed the flags on the real Bodhan outputs against their evidence (marked `ai-review`).
+- Decisions: I approved every default, threshold and interface change, chose the judge, set the spending caps, and reviewed every change.
