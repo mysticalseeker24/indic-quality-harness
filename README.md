@@ -1,27 +1,27 @@
 # Translation and Speech Quality Harness for Bodhan Indic models
 
-An agentic evaluation harness that finds, localises and explains quality problems in **Indic-Translate** translations and **Indic-Speak** audio: every flag says what is wrong, where (character span), how severe, and the evidence behind it. It calibrates itself against human labels, compares runs, and works on languages it has never seen.
+An agentic evaluation harness that finds, localises and explains quality problems in **Indic-Translate** translations and **Indic-Speak** audio. Every flag says what is wrong, where (character span in the translation or the source), how severe, how confident, and the evidence behind it. It calibrates itself against human labels, compares runs, gates CI on regressions, and works on languages it has never seen.
 
-**Bodhan models:** indic-translate, indic-transliterate, indic-speak, indic-transcribe
-**Languages shown:** Hindi, Tamil, Bengali (any language in `src/bodhan_eval/data/langs.json` works)
-**Format:** CLI (`python -m bodhan_eval`) and Python library
-
-> 🚧 Work in progress. Sections marked TODO are filled from real runs.
+**Bodhan models:** indic-translate, indic-transliterate, indic-speak, indic-transcribe (round trips included; no other MT/TTS/ASR and no learned quality-estimation model)
+**Languages shown:** Hindi, Tamil, Bengali; Telugu and Marathi as held-out; any language in `src/bodhan_eval/data/langs.json` works
+**Format:** CLI (`python -m bodhan_eval`) and Python library (`bodhan_eval.api`)
 
 ## What it does
 
-Input: a JSONL file of English sources with optional reference translations, system outputs (text or audio) and human labels. Output: a report folder with per-item flags and evidence, per-language and per-category summaries, calibration against labels, cost, and a diff against a baseline run. Cheap deterministic checks run first, Bodhan round trips next, and the LLM judge and costly speech checks only where they pay off.
+Input: a JSONL file of English sources with optional reference translations, system outputs (text and/or audio) and human labels. Output: a report folder with per-item flags and evidence, per-language and per-category summaries with an MQM-style score, the checks that could not run, calibration against labels, cost, a static dashboard, and a diff against a baseline run. Cheap deterministic checks run first, Bodhan round trips next, the LLM judge and the costly speech checks only where they pay off. The LLM only reads and classifies: it never writes Indian-language text, and it answers with token indices, so every span is copied by code.
 
 ## Setup
 
 ```bash
 git clone https://github.com/mysticalseeker24/indic-quality-harness.git
 cd indic-quality-harness
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt          # or: make setup  (adds test tools)
-cp .env.example .env                     # then add your Bodhan keys and judge LLM settings
+python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
+pip install -r requirements.txt                       # pinned; or: make setup (adds test tools)
+cp .env.example .env                                  # Bodhan keys + judge LLM (any OpenAI-compatible endpoint)
+make check                                            # ruff, mypy and the test suite; no keys needed
 ```
-System dependency: `ffmpeg` (only for non-WAV audio). Or use Docker: `docker build -t bodhan-eval .`
+
+System dependency: `ffmpeg`, only for non-WAV audio. Or Docker: `docker build -t bodhan-eval .` then `docker run --env-file .env -v "$PWD:/work" bodhan-eval --dataset /work/data/demo.jsonl --langs hi,ta,bn --out /work/report`.
 
 ## Run
 
@@ -33,46 +33,98 @@ python -m bodhan_eval \
   [--generate] [--baseline ./previous_report] [--calibration labels.jsonl] [--max-cost-inr 50]
 ```
 
-The judge works with any OpenAI-compatible endpoint (`LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`). Optional judge flags:
+Writes `summary.md`, `summary.json`, `items.jsonl`, `calibration.json`, `diff.md` (with `--baseline`), plus `dashboard.html`, `run_meta.json` and `logs/events.jsonl` (one line per check per item, so every flag traces back to its evidence). Reruns are byte-identical and free: every model output is cached by its exact input, and `--max-cost-inr` reserves budget before each paid call.
 
-| Flag | Default | What it does |
+| Optional flag | Default | What it does |
 |---|---|---|
-| `--judge-replicas N` | 2 | re-ordered prompts per item |
-| `--judge-max-replicas N` | 3 | extra replicas allowed when the first ones disagree (tie-break) |
-| `--judge-models a,b,c` | `LLM_MODEL` | jury on the same endpoint; each model votes once |
-| `--judge-repeat-sample X` | 0.1 | share of items whose first prompt is re-sent unchanged (repeat-consistency) |
-| `--llm-extra-body JSON` | none | provider-specific fields, e.g. `'{"reasoning": {"effort": "low"}}'` |
-| `--llm-inr-per-1k-tokens X` | 0 | LLM price, so `--max-cost-inr` covers the judge too |
-| `--no-judge` | | skip the judge |
+| `--judge-models a,b,c` | `LLM_MODEL` | judge model(s) on the same endpoint (several = a jury) |
+| `--judge-replicas N` / `--judge-max-replicas N` | 2 / 3 | re-ordered prompts per item; a tie-break when they disagree |
+| `--llm-extra-body JSON` | none | e.g. `'{"reasoning": {"effort": "low"}}'` |
+| `--fail-on-regression` (+ `--max-new-major N`) | off / 0 | with `--baseline`: exit code 3 when there are more new major or critical problems than allowed (CI gate) |
+| `--no-judge`, `--no-speech` | | skip a tier |
 
-To compare judge models on labelled data: `python -m bodhan_eval.bakeoff --dataset labelled.jsonl --models a,b --out outputs/bakeoff --max-usd 5` (prints a cost estimate first and refuses above `--max-usd`).
+Tools around the harness:
+
+| Command | What it is for |
+|---|---|
+| `python -m bodhan_eval.score --report R --gold gold.jsonl [--labels review.jsonl] [--exclude calibration.jsonl]` | score a finished blind run the way a hidden test would (recall, false alarms, precision, localisation, category accuracy, per category, language, severity and label source) |
+| `python -m bodhan_eval.inject --dataset clean.jsonl --out gold.jsonl --with-models` | plant labelled errors: 33 methods over all 10 categories (text edits, re-translated English perturbations, waveform edits); never calls the LLM |
+| `python -m bodhan_eval.splits ...` | the unlabelled demo set, a balanced calibration subset and the judge bake-off set from the labelled gold |
+| `python -m bodhan_eval.review export/import ...` | a review sheet for a human and its answers back as labels |
+| `python -m bodhan_eval.bakeoff --dataset labelled.jsonl --models a,b --max-usd 8` | compare judge models (estimate first, hard spend cap) |
+| `python -m bodhan_eval.voices --dataset D --voices "hi=Kavya,Amit" --sample 15 --max-cost-inr 18` | compare Indic-Speak voices on the same texts |
+
+Library: `from bodhan_eval.api import Harness; Harness(max_cost_inr=5).check_translation(source, translation, "hi")` returns flags; `check_speech(text, wav, "hi")` and `evaluate(items)` likewise.
 
 ## How it works
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the architecture diagram, the flow chart, every check, the judge rubric, calibration and how results combine into flags.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the architecture diagram, the flow chart (which checks run in which order, and when the costly ones are triggered), every check, the judge rubric, calibration and how signals become flags. In one paragraph: checks emit *signals* (category, score, span, evidence); `fusion.py` clusters signals that point at the same place, combines them with noisy-OR, and compares the result with a per-category threshold (calibrated from labels when there are enough); only fusion creates flags. Weak hints (length outliers, a name not found) never flag alone; they add weight to the judge or the round trip.
 
 ## Results
 
-TODO: recall, false alarms, localisation and category accuracy on injected data, per category and language; judge model comparison.
+**Demo set:** 180 items (60 NCERT-style passages from Wikipedia × hi/ta/bn, a quarter with Markdown, tables or LaTeX; sources and licences in `data/SOURCES.md`), translated and spoken by Bodhan with `--generate`, then 75 errors planted by the injector. Scored out of sample: the 40 calibration items are excluded.
+
+| Measure (125 scored items) | Value |
+|---|---|
+| Planted errors caught | **60 / 61 (98 %)** |
+| All labelled errors caught (incl. real Bodhan errors) | 92 % (items: 94 %) |
+| False alarms on clean items | 0 / 24 |
+| Precision of flags | 88 % |
+| Localisation (flag overlaps the error) / category correct | 92 % / 98 % |
+| Cross-validated on the calibration subset (2-fold) | item recall 90 %, false alarms 0 % |
+
+**Bodhan's own errors.** The un-injected outputs were not clean. Every one of the 124 flags the harness raised on the 180 generated outputs was reviewed against its evidence (`data/clean_run_review.jsonl`): 101 real, 10 debatable, 13 false alarms (fixed since: D46-D48, after which the speech fixes found 10 more real errors and no new false alarms). Highlights a model team can act on:
+
+- **Indic-Speak silently skips text in parentheses or brackets** (36 cases). Confirmed with a controlled test: the same Hindi sentence lasts 10.67 s with the bracket, 10.41 s with the bracketed words deleted, 12.54 s with commas instead; the transcript lacks the words only in the first two.
+- Speech around numbers: "80% से अधिक प्रदान करती" spoken as a string of decimals; a skip from one "বন্য বাঘ" to the next; looping.
+- Translation: "achieved in 2025" became "will be achieved" in all three languages; "Agra", "tax resistance", "hypotenuse", "2 significant figures", "50 to 55 km" dropped; "transpiration" → water vapour, "stratosphere" → atmosphere, "electric current" → electricity (ta); 12.011 → 12.01; Markdown headings and a whole table flattened.
+
+The demo's real-error labels come from that review (marked `ai-review`), so they only cover what some check flagged: the planted-error recall is the unbiased number.
+
+**Judge bake-off** (50 labelled items, half clean, 10 in held-out Telugu; $5.76 spent):
+
+| Judge | Harness recall / false alarms | Judge-alone P / R | Order consistency | $ / 100 items |
+|---|---|---|---:|---:|
+| **`moonshotai/kimi-k3.1-pro` (default)** | **96 % / 4 %** | 90 % / 96 % | 94 % | 0.34 |
+| `openai/gpt-6-luna` | 96 % / 8 % | 87 % / 96 % | 72 % | 0.06 |
+| `google/gemini-4-hydrogen` | 93 % / 0 % | 96 % / 93 % | 94 % | 1.99 |
+| `google/gemini-4-neon` | 100 % / 12 % | 81 % / 93 % | 96 % | 5.19 |
+| `deepseek/deepseek-v4.1-flash` | 96 % / 12 % | 89 % / 89 % (15 % invalid) | 78 % | 0.12 |
+| `anthropic/claude-sonnet-5.5` | 93 % / 20 % | 57 % / 93 % | 62 % | 1.60 |
+| `openai/gpt-6.2-sol` | 100 % / 28 % | 49 % / 100 % | 86 % | 0.96 |
+| `meta-llama/llama-3.1-8b-instruct` | 85 % / 92 % | 23 % / 78 % | 30 % | 0.01 |
+
+Every model answered in strict `json_schema`. Tested with Kimi K3.1 Pro (reasoning effort low); the harness runs with any OpenAI-compatible model.
+
+**Independent blind exam:** EXAM_RESULTS
+
+**Voices:** VOICE_RESULTS
 
 ## Sample report
 
-TODO: link `sample_report/summary.md`, the dashboard, and hosted demo audio.
+[`sample_report/`](sample_report/) holds the demo run's text outputs: `summary.md`, `summary.json`, `calibration.json`, `scorecard.md`, `dashboard.html` (open it in a browser) and `items.jsonl`. Audio: AUDIO_LINK
 
 ## Demo video
 
-TODO
+DEMO_VIDEO
 
 ## Limitations
 
-TODO: error types we miss and why.
+- **Spoken numbers are not verified.** A number read out as words is accepted as that number; whether it is the *right* number is not checked (no number-to-words tables per language). Missing words and loops around it are caught (D47).
+- **A single cut word** in speech (under 2 words or 10 characters) is not reported: the transcriber drops short words too often.
+- **Units and symbols read out in English inside tables** can make the transcript look garbled (one false alarm on the real outputs).
+- **Names written as exonyms or translated** (BCE → கி.மு, Satluj → শতদ্রু) cannot be matched by transliteration; a missing name is therefore only a hint and the judge decides (D46).
+- **Format localisation:** a deleted table divider row is detected but not located; with several bold pairs, an unmatched `**` is reported at the last marker.
+- **The judge nitpicks** sometimes (near-synonyms, "universal" in a term that already means it); replicas, rubric and calibration keep it at 4 % false alarms on the bake-off set.
+- **Labels for real errors** in the demo come from a review of the harness's own flags (not a human), so recall on real errors is not measured; planted errors measure it.
 
 ## Cost and runtime
 
-TODO: per 100 items, with and without speech checks.
+Per 100 items, checking only (no `--generate`): about **₹8 with speech checks** (transcription ₹7.6, back-translation ₹0.2) and **₹0.2 without**, plus the judge: about **$0.34** with Kimi K3.1 Pro ($0.06 with GPT-6 Luna). Generating the outputs costs extra (speech synthesis ≈ ₹23 per 100 items of ~400 characters). Runtime is bound by Bodhan's rate limits, which the harness waits out instead of dropping checks (D43): RUNTIME_LINE. Reruns from the cache take seconds and cost nothing.
 
 ## AI assistance
 
 - **Design and research:** Claude (claude.ai) helped read the assignment and the Bodhan API docs, compare check designs, and draft the architecture, test plan and build plan.
 - **Implementation:** Claude Code wrote code and tests phase by phase against that plan. Each phase ended at a gate: `make check` (ruff, mypy, pytest) plus that phase's acceptance tests.
-- **Review and decisions:** the author approved every default, threshold and interface change, set the spending caps for live API runs, and reviewed every change; every line is explainable in the debrief.
+- **Review and labels:** Claude Code reviewed the flags on the real Bodhan outputs against their evidence (verdicts in `data/clean_run_review.jsonl`, marked `ai-review`), because a full human listening review did not fit the schedule.
+- **Decisions:** the author approved every default, threshold and interface change, chose the judge, set the spending caps for live API runs, and reviewed every change; every line is explainable in the debrief.
