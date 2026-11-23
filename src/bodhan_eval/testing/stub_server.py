@@ -315,9 +315,11 @@ class _Handler(BaseHTTPRequestHandler):
             self.server.state.miss("transcribe", language=lang)
         elif isinstance(entry, dict):  # tone-word audio: decode what was actually sent (see tone_speech)
             words = [entry["tone_words"][i] for i in decode_tone_words(x, sr) if 0 <= i < len(entry["tone_words"])]
-            for err in entry.get("errors", []):  # an ASR miss that depends on the request's length
+            for err in entry.get("errors", []):  # ASR mistakes that depend on the request's length
                 if err["min_s"] <= seconds <= err["max_s"]:
-                    words = words[: max(0, len(words) - int(err["drop_last_words"]))]
+                    words = words[: max(0, len(words) - int(err.get("drop_last_words", 0)))]
+                    k = int(err.get("repeat_last_words", 0))
+                    words = words + words[-k:] if k else words
             text = " ".join(words)
         else:
             text = str(entry)
