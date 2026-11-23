@@ -52,7 +52,7 @@
       "number": 14,
       "omission": 27,
       "speech_garbled": 12,
-      "speech_omission": 39,
+      "speech_omission": 46,
       "speech_repetition": 18,
       "term": 15,
       "wrong_language": 8
@@ -62,10 +62,10 @@
       "hi": 60,
       "ta": 60
     },
-    "unlabelled": 16
+    "unlabelled": 15
   },
   "known_errors": {
-    "added": 102,
+    "added": 109,
     "dropped": 2,
     "unsure_items": 2
   },
