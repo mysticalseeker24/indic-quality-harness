@@ -177,6 +177,11 @@ class BtLimits:
     extra_min_share: float
 
 
+def translatable_segments(text: str) -> list[tuple[int, int]]:
+    """The sentences that are back-translated one by one (those with at least one letter)."""
+    return [(a, b) for a, b in segments(text) if re.search(r"[^\W\d_]", text[a:b])]
+
+
 class BackTranslationCheck(Check):
     name = "back_translation"
     tier = 1
@@ -187,7 +192,7 @@ class BackTranslationCheck(Check):
 
     def run(self, r: ItemResult, ctx) -> None:
         tgt, src = self.translation(r), r.item.source
-        segs = [(a, b) for a, b in segments(tgt) if re.search(r"[^\W\d_]", tgt[a:b])]
+        segs = translatable_segments(tgt)
         if not segs:
             raise SkipCheck("no translatable text")
         bt = []
