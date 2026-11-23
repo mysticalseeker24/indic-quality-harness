@@ -1,5 +1,6 @@
 # Files excluded when the recipe is exported into the Bodhan Cookbook fork with `git archive`
 # (see docs/dev/SUBMISSION.md). They stay in this personal repo.
+.gitattributes export-ignore
 .github export-ignore
 CLAUDE.md export-ignore
 docs/dev export-ignore
