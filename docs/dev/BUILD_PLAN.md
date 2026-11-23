@@ -81,7 +81,7 @@ Gate P1 (**passed 23 Nov**: `make check` green, 221 tests): `make check` green; 
 
 - Fix K5. Synthetic-audio tests (numpy): inserted silence, clipping, noise burst, truncation, repetition, >30 s chunking, MP3 via ffmpeg. Alignment tests on word lists for omission/tail/repetition/n-gram loop. Second-opinion dismissal test (stub returns the missing words on the alternative chunking).
 - Live smoke: `--generate` on 3 items per language with speech, `--max-cost-inr 3`.
-- Gate P4: tests pass; live audio files play correctly; duration/rate stats sensible.
+- Gate P4 (**passed 23 Nov**: `make check` green, 459 tests + 1 skipped without ffmpeg (runs in CI); live smoke 9 items hi/bn/ta with `--generate`, ₹0.26: valid 24 kHz WAVs, ASR CER 0-2 %, duration ratios 0.75-1.41, 0 flags after the D38 fix; two clips sent to Saksham to listen): tests pass; live audio files play correctly; duration/rate stats sensible.
 
 ## P5 — Injector, calibration, scorer, demo data
 

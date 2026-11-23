@@ -18,6 +18,12 @@ Error envelope: `{"error": {"message", "code", "request_id"}}`. Codes: `invalid_
 - Keys are scoped per model: `GET /v1/models` lists only the key's own model. Transliteration therefore needs its own key; the translate key does not cover it. A key used on another model gets HTTP 403 (live: translate key on `indic-transliterate`). The harness reads the optional `BODHAN_TRANSLITERATE_KEY` and stops sending a refused key for the rest of the run (D29). Verified live: transliteration with its own key, ₹0.00006.
 - `/v1/audio/speech` (WAV, RIFF) and `/v1/audio/transcriptions` work as documented.
 
+**Live speech smoke, 23 Nov 2026 (9 items hi/bn/ta, `--generate`, ₹0.26):**
+- Indic-Speak returns mono 16-bit 24 kHz WAV, speech level ≈ −19 dBFS, no clipping, natural pauses. 1.4–4.9 s for 1–2 short sentences.
+- Indic-Speak answered **HTTP 429 with `Retry-After: 58`** under 6 parallel requests: the speak limit halved to 3 and the retry after 58 s succeeded (K11 working live). Expect TTS rate limits at modest parallelism; the 60 s `Retry-After` cap is about right.
+- Indic-Transcribe reproduced the generated hi and bn text exactly (CER 0) and ta within 2 % CER, on single chunks.
+- **Digits are read out as words, and in Tamil in English**: "365" became "three hundred and sixty five", transcribed in Tamil script (த்ரீ ஹண்ட்ரட் அண்ட் சிக்ஸ்டி ஃபைவ்). The asr check treats a numeral read out as words as explained (D38); whether the number spoken is the right one is not checked. Possibly worth reporting to Bodhan as a speech-quality observation (code-mixed numerals in Tamil).
+
 Prices (from the assignment): Indic-Translate ₹0.20 / 10k output tokens; Indic-Speak ₹6 / 10k input characters; Indic-Transcribe ₹0.10 / audio minute.
 
 Languages: translation targets include `as bn brx doi en gu hi kn kok ks ks-Deva mai ml mni mni-Beng mr ne or pa sa sat sd sd-Arab ta te ur`. TTS `lang` uses base codes (no `ks-Deva`/`mni-Beng`/`sd-Arab` — map to `ks`/`mni`/`sd`). The docs do **not** define the "13 production-tier" languages, so `--langs` accepts every code in `data/langs.json` and degrades gracefully on unknown codes.

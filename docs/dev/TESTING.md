@@ -25,7 +25,7 @@ Layout: `tests/unit/test_<module>.py`, `tests/e2e/`, `tests/fixtures/` (small JS
 | length | extreme ratio vs language median | normal variance; languages with too few items use the prior |
 | judge (parsing) | valid JSON → signals with exact spans | bad JSON; out-of-range or reversed indices; unknown category; missing location for non-omission; Indic text in explanation → masked |
 | audio_stats | 2 s internal silence; edge silence; clipping; noise burst; empty audio | natural short pauses; quiet but clean speech |
-| asr | deletion run mid-text; truncated tail; repeated phrase; looped trigram; poor transcript everywhere → garbled | scattered substitutions; numbers spoken as words; nukta/candrabindu spelling variants; a truncation must not also raise garbled |
+| asr | deletion run mid-text; truncated tail; repeated phrase; looped trigram; poor transcript everywhere → garbled (also around a number) | scattered substitutions; numbers spoken as words (incl. a short item whose number is read in another language, D38); nukta/candrabindu spelling variants; a truncation must not also raise garbled; words lost or repeated at chunk ends are dismissed by the second opinion |
 
 Each row is a separate parametrised test case with a readable id.
 

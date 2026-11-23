@@ -4,50 +4,47 @@ Every Claude Code session reads this first and rewrites "Current state" at each 
 
 ## Current state
 
-- **Phase:** **Phase 3 gate passed** (23 Nov). Next: **Phase 4** (speech), after Saksham's go.
-- **Done in Phase 3** (details in DECISIONS D32–D36, BUILD_PLAN, ARCHITECTURE §4 and §7):
-  - **D32** build requirement `setuptools>=77`, SPDX `license = "Apache-2.0"`. Fresh-venv wheel: warning gone, same files, only `License:` -> `License-Expression:`. **`docker build` not verified** (see open problems).
-  - **K11 / D34** `clients.AdaptiveLimiter` (one per service incl. `llm`; 429 halves once per window, +1 after 20 successes) and `call_with_retries` shared by Bodhan and the LLM; OpenAI SDK `max_retries=0` (its retries cover 408/409/429/5xx together, checked in the SDK source). New `defaults.json` section `clients` (retry_base_s 1.5, retry_max_wait_s 60, aimd_increase_after 20) and matching `Settings` fields.
-  - **K1 / D35** `LLMClient`: `json_schema` -> `json_object` -> plain, per-model memory only after a lower format worked; `--llm-extra-body`; empty answer retried once with 2x `max_tokens`; `usage.cost` recorded (`Budget.llm_cost_usd`, `llm_fresh_tokens`); format cached with the answer; `chat_json(..., schema=, model=, cache_tag=)`. Errors: `ApiError` base, `BodhanError`, `LLMError`.
-  - **K2 / D36** `checks/judge.py` rewritten: strict verdict schema; tie-break replica only on category disagreement (`--judge-max-replicas`, default 3); invalid answers replaced; jury `--judge-models`; repeat sample `--judge-repeat-sample` (default 0.1, hash-chosen, no evidence); windows over 1,200 tokens (`max_windows` 8). **Bug fixed on the way:** replicas could see earlier replicas' verdicts as "automatic findings"; findings are now snapshotted before the first replica. `calibrate.judge_consistency` adds `tie_break_rate` and `repeat`.
-  - **`bakeoff.py`** (`python -m bodhan_eval.bakeoff`): estimate per model, refusal above `--max-usd`, stop when real spend (max of reported and list price) reaches it, prices from `--price` or OpenRouter `/models`, `bakeoff.json` / `bakeoff.md` / `bakeoff_spend.json`, byte-identical cached reruns. Stub server: chat rules by `starts_with`/`model`/`min_max_tokens`/`times`, `finish_reason`, `cost`, `chat_unsupported_formats`, `GET /models`, logs `user`, `body_hash`, `extra`.
-  - Small fixes from the live run: the 404 transport switch is logged once under parallel load; `httpx`/`httpx2`/`openai` INFO lines silenced (`cli.setup_logging`).
-  - **Live smoke** (5 items from the clean fixtures + one injected 100 -> 90, `outputs/smoke_input/smoke.jsonl`, git-ignored): `openai/gpt-6-luna`, reasoning effort low: **json_schema** used, the injected error flagged by numbers + both replicas (0.97), 0 false alarms, 12 judge calls, 0 invalid, order and repeat consistency 100 %. OpenRouter charged $0.0014; budget line ₹0.62 (conservative `--llm-inr-per-1k-tokens 0.05`); Bodhan ₹0.0015.
-  - **Mini bake-off** (same 5 items, Luna + DeepSeek V4.1 Flash): both json_schema, 0 % invalid, 100 % on the single error (proves the tool, does not rank models). Table in LLM_BAKEOFF.md "Status". DeepSeek was charged 2.8x list price.
-  - **Saksham's decisions (23 Nov, D33):** panel `openai/gpt-6.2-sol`, `anthropic/claude-sonnet-5.5`, `google/gemini-4-hydrogen`, `google/gemini-4-neon`, `openai/gpt-6-luna`, `deepseek/deepseek-v4.1-flash`, `moonshotai/kimi-k3.1-pro`, weak `meta-llama/llama-3.1-8b-instruct`; full bake-off **after P5** (moved into the P5 task list and gate); interim judge `LLM_MODEL=openai/gpt-6-luna` (`.env` set, `LLM_BASE_URL=https://openrouter.ai/api/v1`). Estimate for the full run: $4.4–7.5 for 50 items; run with `--max-usd 8`, show the estimate on the real set first.
-  - `make check`: ruff and mypy clean, **416 tests pass** (~30 s).
-- **Paid usage so far:** Bodhan ≈ ₹0.012 of ₹200 · OpenRouter ≈ $0.0039 reported (smoke $0.0014, mini bake-off $0.0025).
-- **Environment (Windows 11):** `.venv` on Python 3.13.9 (CI runs 3.10 and 3.12); GNU make from winget. In PowerShell put `.venv\Scripts` and `%LOCALAPPDATA%\Microsoft\WinGet\Links` on PATH before `make`. PowerShell 5.1 drops empty-string arguments to native commands: use bash for those. In this Bash tool, heredocs with nested quotes break: write scripts to the scratchpad and run them. Never read `.env` into the chat; edit it with `dotenv.set_key` and print names only.
+- **Phase:** **Phase 4 gate passed** (23 Nov). Next: **Phase 5** (injector, scorer, demo data, calibration loop, full judge bake-off), after Saksham's go.
+- **Done in Phase 4** (details in DECISIONS D37–D38, ARCHITECTURE §3 "Where in the text a speech finding is", TESTING §2):
+  - **K5 / D37** ASR chunking at a sentence pause near every 10 s (6-14 s), else the nearest sentence pause up to 29 s, else a word gap, else the quietest point at 18-29 s (`audio.chunk_plan`). Second opinion on long chunks 18-29 s at least 1.5 s from every primary cut, one chunk for 14-29 s audio, middle split for short audio (`audio.alt_chunk_plan`). New `check_params`: `asr_chunk_target_s` 10, `asr_chunk_max_s` 29.
+  - **Time map** (`checks/speech.py`: `TimeMap`, `proportional_map`, `anchored_map`, `relocate`): positions follow speaking time (pauses excluded); each ASR chunk is an anchor (its aligned words). `audio_stats` places silences/noise/clipping proportionally with `details.time_s`; `asr` re-places them with anchors (`details.located_by`). `_time_to_char` is gone. `asr` transcribes per chunk and keeps each word's chunk.
+  - **Stub tone-words** (`testing/stub_server.py`: `tone_word`, `tone_speech`, `decode_tone_words`; fixture `transcribe: {lang: {tone_words, errors: [{min_s, max_s, drop_last_words | repeat_last_words}]}}`): tests choose exactly what is spoken; chunking, alignment and second opinion run for real. Use it for the P5 speech injector tests.
+  - **Tests:** `tests/unit/test_speech_time.py` (chunk plans, time map, end-to-end relocation), `tests/unit/test_check_tables_speech.py` (audio_stats and asr must-catch / must-not-flag, >30 s chunking, MP3 via ffmpeg — skipped locally, CI installs ffmpeg — second-opinion dismissals for words lost or repeated at chunk ends).
+  - **Live speech smoke** (Saksham's yes): 9 fixture sources hi/bn/ta, translations removed, `--generate --speech-sample 1 --no-judge --max-cost-inr 3` -> ₹0.26. Valid mono 16-bit 24 kHz WAVs (two sent to Saksham to listen), ASR CER 0 (hi, bn) and ≤ 2 % (ta), duration ratios 0.75-1.41. Indic-Speak gave **429 with Retry-After 58 s**; AIMD halved speak to 3 and the retry worked.
+  - **D38 fix found live:** Tamil TTS read "365" in English; in a 5-word item that made CER 106 % and a false `speech_garbled`. Numerals read out as words are now excluded from garbled/omission/repetition (`numbers_read_out`, `NUMERAL_RE`), and `spoken_chars` counts a numeral's digits as 5 characters (`speech_chars_per_digit`, new default). Rerun from cache: 0 flags, ₹0.
+  - `make check`: ruff and mypy clean, **459 tests pass, 1 skipped** (MP3 needs ffmpeg) (~34 s).
+- **Paid usage so far:** Bodhan ≈ ₹0.27 of ₹200 · OpenRouter ≈ $0.0039 reported.
+- **Environment (Windows 11):** `.venv` on Python 3.13.9 (CI runs 3.10 and 3.12); GNU make from winget; **no ffmpeg locally** (CI has it). In PowerShell put `.venv\Scripts` and `%LOCALAPPDATA%\Microsoft\WinGet\Links` on PATH before `make`. PowerShell 5.1 drops empty-string arguments: use bash. In this Bash tool, heredocs with nested quotes break: write scripts to the scratchpad. `python -I` ignores `PYTHONIOENCODING`, and the console is cp1252: write Indic text to a UTF-8 file and Read it. Never read `.env` into the chat; edit it with `dotenv.set_key` and print names only. The auto-mode classifier may block paid runs: ask Saksham for an explicit yes first.
 - **Git:** `main`, plain conventional commits (D23), pushed at every checkpoint and at >= 5 unpushed commits (standing yes for normal pushes).
 - **Exam project:** **done and sealed** (Saksham, 23 Nov: it offers to send files and a handover). Nothing from it comes into this repo or chat before Phase 7 — no files, no handover notes, no counts or error mix. At Phase 7 Saksham gives the exact file paths; run once, report as is (CLAUDE.md §3, §4.8).
 - **Repo visibility:** private (make public before export — CLAUDE.md §3).
 
 ## Open problems
 
-1. **Docker:** Docker Desktop is running but its engine never came up (`docker-desktop` WSL distro stopped; `docker info` hangs). D32 still needs `make docker` once Saksham has the engine running.
-2. **Keys:** all five key values (four Bodhan keys + OpenRouter) appear in three earlier Claude Code transcripts of this project (sessions `43f0e4e4…`, `933c6234…`, `639b76b1…`, 23 Nov); none in any git object, repo file, `outputs/`, cache or log. Recommended: rotate now (Saksham had planned after submission). The exam project's transcripts were not scanned (rule 8).
+1. **Docker:** engine was not running (Saksham will set Docker up on his laptop). D32 still needs `make docker`.
+2. **Keys:** all five key values appear in three earlier Claude Code transcripts of this project (23 Nov); none in git or repo files. Rotation recommended (Saksham plans it after submission).
 
 ## Known issues still open
 
-K5 (P4) — details in BUILD_PLAN.md. `summary.md` is plain (P6).
+None from K1–K12. `summary.md` is plain (P6).
 
 ## Next 3 tasks
 
-1. Phase 4: K5 (speech localisation with chunk anchors) and the synthetic-audio tests (silence, clipping, noise burst, truncation, repetition, >30 s chunking, MP3 via ffmpeg).
-2. Phase 4: alignment tests (omission/tail/repetition/n-gram loop) and the second-opinion dismissal test; gate P4.
-3. Phase 5: injector, scorer, demo data, Saksham's labels, then the full 8-model bake-off (estimate first).
+1. Phase 5: `inject.py` (BUILD_PLAN P5: methods per category, three severities, seeded per item, speech edits labelled through the same time map; never calls the LLM — tested) and `score.py`.
+2. Phase 5: demo dataset per DATASET_PLAN.md, the clean `--generate` run, then the human milestone (CLAUDE.md §3): export a review CSV for Saksham's labels and confirm dataset sources/licences.
+3. Phase 5: the bake-off set and the full 8-model judge bake-off (LLM_BAKEOFF.md; `--dry-run` estimate on the real set first, Saksham's approval, then run and recommend a default).
 
 ## Read next
 
-- `docs/dev/BUILD_PLAN.md` (P4; K5)
-- `docs/dev/TESTING.md` §2 (audio_stats and asr rows), `docs/dev/API_NOTES.md` (transcribe)
-- `src/bodhan_eval/checks/speech.py`, `src/bodhan_eval/audio.py`
+- `docs/dev/BUILD_PLAN.md` (P5), `docs/dev/DATASET_PLAN.md`, `docs/dev/LLM_BAKEOFF.md` (Status, Procedure)
+- `docs/dev/TESTING.md` §3 and §6
+- `src/bodhan_eval/generate.py`, `src/bodhan_eval/calibrate.py`, `src/bodhan_eval/checks/speech.py` (time map)
 
 ## Next session prompt
 
 ```
 Resume indic-quality-harness. Read CLAUDE.md, then docs/dev/HANDOFF.md and the files it lists under "Read next". Give me the 5-line status and wait for my go.
-Next up: Phase 4 — K5 speech localisation with chunk anchors and the synthetic-audio test tables, then the alignment and second-opinion tests; stop at the P4 gate. Also run `make docker` if the Docker engine is up.
+Next up: Phase 5 — inject.py and score.py test-first (injector never calls the LLM), then the demo dataset and the clean --generate run (estimate first), the review CSV for my labels, and the full judge bake-off after my approval; stop at the P5 gate.
 ```
 
 ## Session log
@@ -58,3 +55,4 @@ Next up: Phase 4 — K5 speech localisation with chunk anchors and the synthetic
 | 1 | 23 Nov 2026 | coding session | Phase 1: K12/K4/K10, core unit tests, stub server, pipeline/CLI/report/diff, offline e2e + determinism; repo connected; commit history rewritten without trailers |
 | 1b | 23 Nov 2026 | coding session | Phase 2: K3/K6/K8, check tables, 4 table-driven fixes, clean false-alarm suite (0/20); .env + hygiene test; live probe found 404 text routes → chat-transport fallback; D29 transliterate key (live-verified); D26 acked; D30 export hygiene; D31 README AI note |
 | 2 | 23 Nov 2026 | coding session | Phase 3: D32 setuptools; K11 AIMD + one retry policy; K1 format chain; K2 judge (tie-break, jury, repeat, windows; replica-blindness fix); bakeoff.py; live smoke on gpt-6-luna (json_schema, error flagged, $0.0014); mini bake-off; panel and P5 bake-off decided (D33); key-exposure scan; docker build blocked |
+| 2b | 23 Nov 2026 | same session | Phase 4: K5 time map with ASR chunk anchors, ~10 s chunking (29 s where needed, D37); stub tone-words; speech check tables + second-opinion tests; live speech smoke ₹0.26 (429 Retry-After 58 s handled); D38 numbers read out as words (false garbled found live); exam set sealed until P7 |
