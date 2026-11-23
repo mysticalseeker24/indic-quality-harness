@@ -21,7 +21,7 @@ Every Claude Code session reads this first and rewrites "Current state" at each 
 
 ## Open problems
 
-1. **Docker:** engine was not running (Saksham will set Docker up on his laptop). D32 still needs `make docker`.
+1. **CI has been red since Phase 1** (found 23 Nov, after the P4 push): `rapidfuzz==3.14.6` (pinned in the draft import) needs Python >= 3.11 and 3.14.x has no 3.10 wheels, so the 3.10 job fails at `pip install` and fail-fast cancels 3.12 — the tests never ran in CI. Fix waiting for Saksham's yes (dependency change): pin `rapidfuzz==3.13.0`, the last release with 3.10 wheels (dry-resolved for py3.10 and py3.12 Linux and py3.13 Windows), or drop Python 3.10. The CI `docker` job (build + `--help`) and `cookbook-validator` pass, which verifies the D32 Docker build; local `make docker` still waits for Docker on Saksham's laptop.
 2. **Keys:** all five key values appear in three earlier Claude Code transcripts of this project (23 Nov); none in git or repo files. Rotation recommended (Saksham plans it after submission).
 
 ## Known issues still open
