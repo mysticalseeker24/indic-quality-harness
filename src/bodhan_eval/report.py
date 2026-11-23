@@ -19,7 +19,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import __version__
+from . import __version__, mqm
 from .config import category_group, taxonomy
 from .models import Flag, ItemResult
 
@@ -126,8 +126,32 @@ def _language_summary(rs: list[ItemResult]) -> dict[str, Any]:
         "uncertain_items": sum(bool(r.uncertain) for r in rs),
         "flags": len(flags),
         "flags_by_category": dict(sorted(Counter(f.category for f in flags).items())),
+        "mqm": mqm.language_score(rs),
         "checks": _check_counts(rs),
     }
+
+
+def check_table(rs: list[ItemResult]) -> dict[str, dict[str, Any]]:
+    """Per check: on how many items it ran, was skipped or not applicable, or failed, and why. A check that
+    could not run leaves no flag, so without this table an unchecked item would look like a clean one."""
+    out: dict[str, dict[str, Any]] = {}
+    for r in rs:
+        for name, c in r.checks.items():
+            row = out.setdefault(name, {"ok": 0, "error": 0, "skipped": 0, "not_applicable": 0, "reasons": Counter()})
+            status = c.get("status")
+            row[status if status in ("ok", "skipped", "not_applicable") else "error"] += 1
+            if status != "ok" and c.get("reason"):
+                row["reasons"][str(c["reason"])[:100]] += 1
+    return {name: {**row, "reasons": dict(row["reasons"].most_common())} for name, row in sorted(out.items())}
+
+
+def markdown_checks(table: dict[str, dict[str, Any]]) -> list[str]:
+    lines = ["", "## Checks", "", "An item a check could not run on has no flags from it: read zero flags there as not checked.", "",
+             "| Check | Ran | Skipped / not applicable | Failed | Main reasons |", "|---|---:|---:|---:|---|"]  # fmt: skip
+    for name, row in table.items():
+        reasons = "; ".join(f"{_cell(k, 70)} ({v})" for k, v in list(row["reasons"].items())[:3])
+        lines.append(f"| {name} | {row['ok']} | {row['skipped'] + row['not_applicable']} | {row['error']} | {reasons} |")
+    return lines
 
 
 def _category_summary(rs: list[ItemResult]) -> dict[str, Any]:
@@ -171,6 +195,8 @@ def summarize(result: RunResult) -> dict[str, Any]:
         "generated": {"translations": generated["translation"], "audio": generated["audio"]},
         "per_language": {lang: _language_summary(rs) for lang, rs in sorted(by_lang.items())},
         "per_category": _category_summary(main),
+        "checks": check_table(main),
+        "mqm": mqm.language_score(main),
         "cost_inr_of_outputs_used": {**dict(sorted(budget.used.items())), "total": sum(budget.used.values())},
         "llm_tokens": dict(budget.llm_tokens),
         "thresholds": dict(sorted(result.thresholds.items())),
@@ -215,13 +241,16 @@ def render_markdown(result: RunResult, summary: dict[str, Any]) -> str:
         "",
         "## By language",
         "",
-        "| Language | Items | Scored | Flagged items | Flags | Uncertain items |",
-        "|---|---:|---:|---:|---:|---:|",
+        "| Language | Items | Scored | Flagged items | Flags | Uncertain items | MQM score |",
+        "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for lang, s in summary["per_language"].items():
+        score = "–" if s["mqm"] is None else f"{s['mqm']:.1f}"
         lines.append(
-            f"| {lang} | {s['items']} | {s['scored']} | {s['flagged_items']} | {s['flags']} | {s['uncertain_items']} |"
+            f"| {lang} | {s['items']} | {s['scored']} | {s['flagged_items']} | {s['flags']} | {s['uncertain_items']} "
+            f"| {score} |"
         )
+    lines += ["", "MQM score: 100 minus penalties per source word (minor 1, major 5, critical 10), averaged per item."]
     lines += ["", "## By category", ""]
     if summary["per_category"]:
         lines += ["| Category | Flags | Items | Severity |", "|---|---:|---:|---|"]
@@ -232,6 +261,7 @@ def render_markdown(result: RunResult, summary: dict[str, Any]) -> str:
         lines.append("No flags.")
     lines += _markdown_top_failures(result)
     lines += _markdown_calibration(summary)
+    lines += markdown_checks(summary["checks"])
     lines += _markdown_cost(summary)
     lines += _markdown_problems(result)
     return "\n".join(lines) + "\n"

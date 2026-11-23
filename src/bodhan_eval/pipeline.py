@@ -61,6 +61,8 @@ class RunOptions:
     langs: set[str] | None = None  # None = every language in the dataset
     generate: bool = False
     baseline: Path | None = None
+    fail_on_regression: bool = False  # CI mode: exit 3 when diff.md shows too many new problems
+    max_new_major: int = 0
     calibration: Path | None = None
     max_cost_inr: float | None = None
     cache_dir: Path = Path(".cache/bodhan_eval")
@@ -149,13 +151,16 @@ def run(opts: RunOptions) -> int:
     try:
         result = execute(items, rep, ctx, opts)
         records = report.write_all(opts.out, result)
-        if opts.baseline is not None:
-            diff.write_diff(opts.out, opts.baseline, records)
+        counts = diff.write_diff(opts.out, opts.baseline, records) if opts.baseline is not None else None
         report.write_run_meta(opts.out, result, runtime_s=time.monotonic() - started)
     finally:
         ctx.events.close()
         ctx.cache.close()
     log.info("report written to %s (spent ₹%.4f this run)", opts.out, ctx.budget.total_spent)
+    if opts.fail_on_regression and counts is not None and diff.gate_exit_code(counts, opts.max_new_major):
+        log.error("regression gate: %d new major or critical problems (allowed %d); see diff.md",
+                  counts["new_major_or_worse"], opts.max_new_major)  # fmt: skip
+        return 3
     return 0
 
 

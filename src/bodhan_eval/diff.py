@@ -70,12 +70,22 @@ def _severity_order(pair: tuple[str, dict]) -> tuple[int, str, str]:
     return SEV_RANK.get(flag["severity"], 3), key, flag["category"]
 
 
-def render(base: dict[str, dict], cur: dict[str, dict], baseline_name: str) -> str:
+def changes(base: dict[str, dict], cur: dict[str, dict]) -> tuple[list[tuple[str, dict]], list[tuple[str, dict]]]:
+    """(new problems, problems gone) on the items in both runs, most severe first."""
     common = sorted(set(base) & set(cur))
     regressions = [(k, f) for k in common for f in _unmatched(cur[k]["flags"], base[k]["flags"])]
     improvements = [(k, f) for k in common for f in _unmatched(base[k]["flags"], cur[k]["flags"])]
-    regressions.sort(key=_severity_order)
-    improvements.sort(key=_severity_order)
+    return sorted(regressions, key=_severity_order), sorted(improvements, key=_severity_order)
+
+
+def gate_exit_code(counts: dict[str, int], max_new_major: int) -> int:
+    """CI mode (``--fail-on-regression``): exit code 3 when there are more new major-or-critical problems than allowed."""
+    return 3 if counts["new_major_or_worse"] > max_new_major else 0
+
+
+def render(base: dict[str, dict], cur: dict[str, dict], baseline_name: str) -> str:
+    common = sorted(set(base) & set(cur))
+    regressions, improvements = changes(base, cur)
     lines = [
         "# Changes against the baseline",
         "",
@@ -102,12 +112,22 @@ def render(base: dict[str, dict], cur: dict[str, dict], baseline_name: str) -> s
     return "\n".join(lines) + "\n"
 
 
-def write_diff(out: Path, baseline_dir: Path, current_records: list[dict[str, Any]]) -> None:
+def write_diff(out: Path, baseline_dir: Path, current_records: list[dict[str, Any]]) -> dict[str, int]:
+    """Write diff.md; return the counts the CI gate uses."""
+    counts = {"new_problems": 0, "new_major_or_worse": 0, "fixed_problems": 0}
     base_items = baseline_dir / "items.jsonl"
     if not base_items.is_file():
         text = f"# Changes against the baseline\n\nBaseline `{baseline_dir.name}` has no `items.jsonl`; nothing to compare.\n"
     else:
         cur = {f"{r['id']}::{r['lang']}": r for r in current_records if not r.get("calibration_only")}
         cur = {k: json.loads(json.dumps(v, default=str)) for k, v in cur.items()}  # tuples -> lists, as on disk
-        text = render(_load_items(base_items), cur, baseline_dir.name)
+        base = _load_items(base_items)
+        text = render(base, cur, baseline_dir.name)
+        new, gone = changes(base, cur)
+        counts = {
+            "new_problems": len(new),
+            "new_major_or_worse": sum(f["severity"] in ("major", "critical") for _, f in new),
+            "fixed_problems": len(gone),
+        }
     (out / "diff.md").write_text(text, encoding="utf-8", newline="\n")
+    return counts

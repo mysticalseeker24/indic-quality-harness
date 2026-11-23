@@ -94,6 +94,8 @@ def build_parser() -> argparse.ArgumentParser:
     req.add_argument("--out", type=Path, required=True, help="report folder (created if missing)")
     ap.add_argument("--generate", action="store_true", help="create missing translations and audio with Bodhan models")
     ap.add_argument("--baseline", type=Path, help="previous report folder; writes diff.md")
+    ap.add_argument("--fail-on-regression", action="store_true", help="with --baseline: exit 3 if diff.md has more new major/critical problems than --max-new-major (CI gate)")
+    ap.add_argument("--max-new-major", type=int, default=0, help="new major/critical problems allowed (default 0)")
     ap.add_argument("--calibration", type=Path, help="JSONL of human labels (full items or id[+lang]+labels)")
     ap.add_argument(
         "--max-cost-inr", type=_non_negative, help="hard cap on money spent in this run (cache hits are free)"
@@ -167,6 +169,8 @@ def options_from_args(args: argparse.Namespace) -> RunOptions:
         langs=args.langs,
         generate=args.generate,
         baseline=args.baseline,
+        fail_on_regression=args.fail_on_regression,
+        max_new_major=args.max_new_major,
         calibration=args.calibration,
         max_cost_inr=args.max_cost_inr,
         cache_dir=args.cache_dir,
@@ -196,7 +200,10 @@ def setup_logging(level: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    ap = build_parser()
+    args = ap.parse_args(argv)
+    if args.fail_on_regression and args.baseline is None:
+        ap.error("--fail-on-regression needs --baseline")
     setup_logging(args.log_level)
     for code in sorted(args.langs or ()):
         if not lang_info(code).known:
