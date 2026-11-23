@@ -4,47 +4,41 @@ Every Claude Code session reads this first and rewrites "Current state" at each 
 
 ## Current state
 
-- **Phase:** **Phase 4 gate passed** (23 Nov). Next: **Phase 5** (injector, scorer, demo data, calibration loop, full judge bake-off), after Saksham's go.
-- **Done in Phase 4** (details in DECISIONS D37–D38, ARCHITECTURE §3 "Where in the text a speech finding is", TESTING §2):
-  - **K5 / D37** ASR chunking at a sentence pause near every 10 s (6-14 s), else the nearest sentence pause up to 29 s, else a word gap, else the quietest point at 18-29 s (`audio.chunk_plan`). Second opinion on long chunks 18-29 s at least 1.5 s from every primary cut, one chunk for 14-29 s audio, middle split for short audio (`audio.alt_chunk_plan`). New `check_params`: `asr_chunk_target_s` 10, `asr_chunk_max_s` 29.
-  - **Time map** (`checks/speech.py`: `TimeMap`, `proportional_map`, `anchored_map`, `relocate`): positions follow speaking time (pauses excluded); each ASR chunk is an anchor (its aligned words). `audio_stats` places silences/noise/clipping proportionally with `details.time_s`; `asr` re-places them with anchors (`details.located_by`). `_time_to_char` is gone. `asr` transcribes per chunk and keeps each word's chunk.
-  - **Stub tone-words** (`testing/stub_server.py`: `tone_word`, `tone_speech`, `decode_tone_words`; fixture `transcribe: {lang: {tone_words, errors: [{min_s, max_s, drop_last_words | repeat_last_words}]}}`): tests choose exactly what is spoken; chunking, alignment and second opinion run for real. Use it for the P5 speech injector tests.
-  - **Tests:** `tests/unit/test_speech_time.py` (chunk plans, time map, end-to-end relocation), `tests/unit/test_check_tables_speech.py` (audio_stats and asr must-catch / must-not-flag, >30 s chunking, MP3 via ffmpeg — skipped locally, CI installs ffmpeg — second-opinion dismissals for words lost or repeated at chunk ends).
-  - **Live speech smoke** (Saksham's yes; he listened to two clips: good, Tamil says the number in English with a Tamil accent): 9 fixture sources hi/bn/ta, translations removed, `--generate --speech-sample 1 --no-judge --max-cost-inr 3` -> ₹0.26. Valid mono 16-bit 24 kHz WAVs (two sent to Saksham to listen), ASR CER 0 (hi, bn) and ≤ 2 % (ta), duration ratios 0.75-1.41. Indic-Speak gave **429 with Retry-After 58 s**; AIMD halved speak to 3 and the retry worked.
-  - **D38 fix found live:** Tamil TTS read "365" in English; in a 5-word item that made CER 106 % and a false `speech_garbled`. Numerals read out as words are now excluded from garbled/omission/repetition (`numbers_read_out`, `NUMERAL_RE`), and `spoken_chars` counts a numeral's digits as 5 characters (`speech_chars_per_digit`, new default). Rerun from cache: 0 flags, ₹0.
-  - `make check`: ruff and mypy clean, **459 tests pass, 1 skipped** (MP3 needs ffmpeg) (~34 s).
-- **Paid usage so far:** Bodhan ≈ ₹0.27 of ₹200 · OpenRouter ≈ $0.0039 reported.
-- **Environment (Windows 11):** `.venv` on Python 3.13.9 (CI runs 3.10 and 3.12); GNU make from winget; **no ffmpeg locally** (CI has it). In PowerShell put `.venv\Scripts` and `%LOCALAPPDATA%\Microsoft\WinGet\Links` on PATH before `make`. PowerShell 5.1 drops empty-string arguments: use bash. In this Bash tool, heredocs with nested quotes break: write scripts to the scratchpad. `python -I` ignores `PYTHONIOENCODING`, and the console is cp1252: write Indic text to a UTF-8 file and Read it. Never read `.env` into the chat; edit it with `dotenv.set_key` and print names only. The auto-mode classifier may block paid runs: ask Saksham for an explicit yes first.
-- **Git:** `main`, plain conventional commits (D23), pushed at every checkpoint and at >= 5 unpushed commits (standing yes for normal pushes).
-- **Exam project:** **done and sealed** (Saksham, 23 Nov: it offers to send files and a handover). Nothing from it comes into this repo or chat before Phase 7 — no files, no handover notes, no counts or error mix. At Phase 7 Saksham gives the exact file paths; run once, report as is (CLAUDE.md §3, §4.8).
-- **Repo visibility:** private (make public before export — CLAUDE.md §3).
+- **Phase:** P5 gate passed and P6 built (23 Nov, Saksham asked to move fast to a same-day submission). Now: the one-time exam run, then sample_report, README numbers, Cookbook export and PR.
+- **P5 done:** injector output `data/demo_gold.jsonl` (180 items, 75 planted errors, 30 left for a review Saksham did not do); `splits.py` (+ `--known-errors`, D45) writes `demo.jsonl`, `demo_labels.jsonl` (40), `bakeoff.jsonl` (50 incl. 10 te), `demo_gold_reviewed.jsonl`, `splits.json`; `score.py --labels`. Every flag on the 180 real outputs was reviewed (`data/clean_run_review.jsonl`, reviewer `ai-review`): 111 real (36 = Indic-Speak skips bracketed text, confirmed by a controlled test in `outputs/paren_test`), 10 debatable, 13 false alarms.
+- **Fixes:** D46 a missing name alone is a hint (all 7 lone entity flags were false); English gloss in brackets is not wrong language; table divider rows are not spoken; D47 omissions/loops next to or inside numbers read out as words; D48 `asr_min_deleted_words` 3 -> 2.
+- **Demo (out of sample, 125 items, judge Luna; Kimi rerun in progress -> outputs/demo_kimi):** planted errors 60/61, all labels 92 %, precision 88 %, 0/24 clean flagged, localisation 92 %, category 98 %; CV item recall 90 %, FA 0 %.
+- **Bake-off** (8 judges, $5.76): default judge **moonshotai/kimi-k3.1-pro** (Saksham), reasoning effort low; table in README and LLM_BAKEOFF.md.
+- **P6 done:** MQM per language, checks-that-could-not-run table, `--fail-on-regression` (exit 3), `dashboard.html`, `api.py`, `voices.py` (run 15/lang in progress -> outputs/voices).
+- **Docker:** local `make docker` passes (Docker 29.2.1, image 1.07 GB, ffmpeg 7.1.5; a no-key run in the container is byte-identical to the host).
+- **Audio:** release `demo-audio-v1` (234 MB zip of the 180 WAVs data/demo.jsonl points to).
+- **History scan (F2):** clean (no key-like strings; only `.env.example` and `outputs/.gitkeep` ever committed).
+- **Paid usage:** Bodhan ≈ ₹64 (clean generate run ₹52.39 in 2 h 55 min; re-checks ₹1.63; inject ₹4.83; demo ₹4.82 + ₹0.97 re-checks; bracket test ₹0.30; voices and exam pending). OpenRouter ≈ $6.2 (clean $0.16, held-out $0.02, demo $0.04, bake-off $5.76; Kimi demo ≈ $0.6 pending).
 
 ## Open problems
 
-1. **CI** was red since Phase 1 (`rapidfuzz==3.14.6` has no Python 3.10 wheels; tests never ran in CI). Fixed with `rapidfuzz==3.13.0` (D39, Saksham's yes): **CI green** on `e8c9874` (test 3.10, test 3.12 incl. the MP3/ffmpeg test, docker, cookbook-validator). The CI `docker` job (build + `--help`) and `cookbook-validator` pass, which verifies the D32 Docker build; local `make docker` still waits for Docker on Saksham's laptop.
-2. **Keys:** all five key values appear in three earlier Claude Code transcripts of this project (23 Nov); none in git or repo files. Rotation recommended (Saksham plans it after submission).
+- Exam (`E:\Code and Shit\Work\Bodhan AI\iph-exam data`, only `exam.jsonl`, `calibration.jsonl`, `labels.jsonl`, `run_b\exam.jsonl` and their audio may be opened, by the CLI only): approved once, cap ₹20, judge Kimi.
+- Demo video: Saksham records (≤5 min).
 
 ## Known issues still open
 
-None from K1–K12. `summary.md` is plain (P6).
+- K13 format localisation (divider row not located; unmatched `**` at the last marker). K15(b) units/symbols read out in English in tables look garbled. Spoken numbers are not verified.
 
 ## Next 3 tasks
 
-1. Phase 5: `inject.py` (BUILD_PLAN P5: methods per category, three severities, seeded per item, speech edits labelled through the same time map; never calls the LLM — tested) and `score.py`.
-2. Phase 5: demo dataset per DATASET_PLAN.md, the clean `--generate` run, then the human milestone (CLAUDE.md §3): export a review CSV for Saksham's labels and confirm dataset sources/licences.
-3. Phase 5: the bake-off set and the full 8-model judge bake-off (LLM_BAKEOFF.md; `--dry-run` estimate on the real set first, Saksham's approval, then run and recommend a default).
+1. Exam run A + B (`--baseline`) + scorecard; put numbers in README/PR as they are.
+2. `sample_report/` from the Kimi demo run; fill README placeholders (EXAM_RESULTS, VOICE_RESULTS, DEMO_VIDEO, RUNTIME_LINE).
+3. Saksham makes the repo public; export to the Cookbook fork (SUBMISSION.md), PR body from `docs/dev/PR_BODY.md`, his approval, push, PR.
 
 ## Read next
 
-- `docs/dev/BUILD_PLAN.md` (P5), `docs/dev/DATASET_PLAN.md`, `docs/dev/LLM_BAKEOFF.md` (Status, Procedure)
-- `docs/dev/TESTING.md` §3 and §6
-- `src/bodhan_eval/generate.py`, `src/bodhan_eval/calibrate.py`, `src/bodhan_eval/checks/speech.py` (time map)
+- README.md, docs/dev/SUBMISSION.md, docs/dev/PR_BODY.md, docs/dev/DECISIONS.md (D43-D48).
 
 ## Next session prompt
 
 ```
 Resume indic-quality-harness. Read CLAUDE.md, then docs/dev/HANDOFF.md and the files it lists under "Read next". Give me the 5-line status and wait for my go.
-Next up: Phase 5 — inject.py and score.py test-first (injector never calls the LLM), then the demo dataset and the clean --generate run (estimate first), the review CSV for my labels, and the full judge bake-off after my approval; stop at the P5 gate.
+Next up: finish the submission (exam numbers into README/PR, sample_report, Cookbook export and PR).
 ```
 
 ## Session log
@@ -56,3 +50,4 @@ Next up: Phase 5 — inject.py and score.py test-first (injector never calls the
 | 1b | 23 Nov 2026 | coding session | Phase 2: K3/K6/K8, check tables, 4 table-driven fixes, clean false-alarm suite (0/20); .env + hygiene test; live probe found 404 text routes → chat-transport fallback; D29 transliterate key (live-verified); D26 acked; D30 export hygiene; D31 README AI note |
 | 2 | 23 Nov 2026 | coding session | Phase 3: D32 setuptools; K11 AIMD + one retry policy; K1 format chain; K2 judge (tie-break, jury, repeat, windows; replica-blindness fix); bakeoff.py; live smoke on gpt-6-luna (json_schema, error flagged, $0.0014); mini bake-off; panel and P5 bake-off decided (D33); key-exposure scan; docker build blocked |
 | 2b | 23 Nov 2026 | same session | Phase 4: K5 time map with ASR chunk anchors, ~10 s chunking (29 s where needed, D37); stub tone-words; speech check tables + second-opinion tests; live speech smoke ₹0.26 (429 Retry-After 58 s handled); D38 numbers read out as words (false garbled found live); exam set sealed until P7 |
+- 23 Nov (late): P5 gate + P6: splits, flag review (D45), D46-D48 fixes, bake-off (Kimi default), report extras, api, voices, audio release, history scan clean.
