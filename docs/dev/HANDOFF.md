@@ -4,49 +4,50 @@ Every Claude Code session reads this first and rewrites "Current state" at each 
 
 ## Current state
 
-- **Phase:** **Phase 2 gate passed** (23 Nov). Next: **Phase 3** (judge and LLM layer), after Saksham's go.
-- **Done in Phase 2:**
-  - K3 (`BtLimits` passed as a value; check instances hold no state), K6 (`pipeline.prefetch_transliterations` dedupes per (lang, term); `entity_max_transliterations` caps direct calls; no transliteration for languages without Indic script data), K8 (two-pass clustering; unlocated signals join the strongest cluster of their category).
-  - TESTING.md §2 tables for script, format, numbers (incl. every digit system, Indian grouping, unit/month via back-translation), length, back-translation and entities: `tests/unit/test_check_tables_*.py`. Shared fixtures in `tests/conftest.py` (real `RunContext`, `run_one`, `run_chain`, `fuse_item`).
-  - Fixes found by the tables: `has_markup` ignored Markdown links; units compared by spelling (km vs kilometres false alarm) and only within one family (litres -> kg missed); `entity_match_similarity` 72 -> 85 (D26, see open question 2).
-  - Clean-item false-alarm suite (`tests/e2e/test_false_alarms.py`, 20 items hi/bn/ta): **0 flagged, 0 in review**. A guard rejects control characters in fixtures. Shell heredocs collapse `\\`, so generate fixtures from files and use `chr(92)`.
-  - **Live API finding (D24):** hosted `/translate` and `/transliterate` answer 404; the documented chat transport works. Clients fall back automatically (verified live). Keys are scoped per model (API_NOTES).
-  - Secrets: `.env` filled by Saksham (Bodhan translate/speak/transcribe/transliterate keys, OpenRouter key; `LLM_MODEL` empty until the P3 bake-off). `tests/unit/test_repo_hygiene.py` fails `make check` if `.env` is tracked or any repo file holds a value from it or a key-shaped string.
-  - **D29 (after the gate, Saksham's yes):** optional `BODHAN_TRANSLITERATE_KEY`, falling back to `BODHAN_API_KEY`, then the translate key. A key refused with 401/403 is not sent again in the run (live: the translate key gets 403 on `indic-transliterate`; the own key works). Transliteration spend stays on the `translate` cost line.
-  - **Saksham's answers (23 Nov):** D26 acked (entity threshold 85). D30: `CLAUDE.md` and `docs/dev/` stay tracked; `.gitattributes` now export-ignores itself, so `git archive` ships none of the private files (checked). D31: README "AI assistance" written, because SPEC asks for it (tools and what for); commits stay attribution-free (D23).
-  - `make check`: ruff and mypy clean, **321 tests pass** (~20 s).
-- **Paid usage so far:** Bodhan ≈ ₹0.01 of ₹200 (key probe, one live fallback check, one live transliteration) · OpenRouter $0 (key limit shows 50).
-- **Environment (Windows 11):** `.venv` on Python 3.13.9 (CI runs 3.10 and 3.12); GNU make from winget. In PowerShell put `.venv\Scripts` and `%LOCALAPPDATA%\Microsoft\WinGet\Links` on PATH before `make`. PowerShell 5.1 drops empty-string arguments to native commands: use bash for those. Repo git config: `core.autocrlf=false`, GitHub credentials via `gh auth git-credential` (repo-local). `.claude/` is ignored via `.git/info/exclude`.
-- **Git:** `main`. Commit messages are plain conventional commits, no attribution trailers (D23). Push in batches of ≥5 commits. Pushed up to the D29 commit (885be30); **3 commits not pushed yet** (export fix, README note, this checkpoint), they go out with the next batch.
-- **Exam project:** reminded at the Phase 1 gate; status unknown here.
+- **Phase:** **Phase 3 gate passed** (23 Nov). Next: **Phase 4** (speech), after Saksham's go.
+- **Done in Phase 3** (details in DECISIONS D32–D36, BUILD_PLAN, ARCHITECTURE §4 and §7):
+  - **D32** build requirement `setuptools>=77`, SPDX `license = "Apache-2.0"`. Fresh-venv wheel: warning gone, same files, only `License:` -> `License-Expression:`. **`docker build` not verified** (see open problems).
+  - **K11 / D34** `clients.AdaptiveLimiter` (one per service incl. `llm`; 429 halves once per window, +1 after 20 successes) and `call_with_retries` shared by Bodhan and the LLM; OpenAI SDK `max_retries=0` (its retries cover 408/409/429/5xx together, checked in the SDK source). New `defaults.json` section `clients` (retry_base_s 1.5, retry_max_wait_s 60, aimd_increase_after 20) and matching `Settings` fields.
+  - **K1 / D35** `LLMClient`: `json_schema` -> `json_object` -> plain, per-model memory only after a lower format worked; `--llm-extra-body`; empty answer retried once with 2x `max_tokens`; `usage.cost` recorded (`Budget.llm_cost_usd`, `llm_fresh_tokens`); format cached with the answer; `chat_json(..., schema=, model=, cache_tag=)`. Errors: `ApiError` base, `BodhanError`, `LLMError`.
+  - **K2 / D36** `checks/judge.py` rewritten: strict verdict schema; tie-break replica only on category disagreement (`--judge-max-replicas`, default 3); invalid answers replaced; jury `--judge-models`; repeat sample `--judge-repeat-sample` (default 0.1, hash-chosen, no evidence); windows over 1,200 tokens (`max_windows` 8). **Bug fixed on the way:** replicas could see earlier replicas' verdicts as "automatic findings"; findings are now snapshotted before the first replica. `calibrate.judge_consistency` adds `tie_break_rate` and `repeat`.
+  - **`bakeoff.py`** (`python -m bodhan_eval.bakeoff`): estimate per model, refusal above `--max-usd`, stop when real spend (max of reported and list price) reaches it, prices from `--price` or OpenRouter `/models`, `bakeoff.json` / `bakeoff.md` / `bakeoff_spend.json`, byte-identical cached reruns. Stub server: chat rules by `starts_with`/`model`/`min_max_tokens`/`times`, `finish_reason`, `cost`, `chat_unsupported_formats`, `GET /models`, logs `user`, `body_hash`, `extra`.
+  - Small fixes from the live run: the 404 transport switch is logged once under parallel load; `httpx`/`httpx2`/`openai` INFO lines silenced (`cli.setup_logging`).
+  - **Live smoke** (5 items from the clean fixtures + one injected 100 -> 90, `outputs/smoke_input/smoke.jsonl`, git-ignored): `openai/gpt-6-luna`, reasoning effort low: **json_schema** used, the injected error flagged by numbers + both replicas (0.97), 0 false alarms, 12 judge calls, 0 invalid, order and repeat consistency 100 %. OpenRouter charged $0.0014; budget line ₹0.62 (conservative `--llm-inr-per-1k-tokens 0.05`); Bodhan ₹0.0015.
+  - **Mini bake-off** (same 5 items, Luna + DeepSeek V4.1 Flash): both json_schema, 0 % invalid, 100 % on the single error (proves the tool, does not rank models). Table in LLM_BAKEOFF.md "Status". DeepSeek was charged 2.8x list price.
+  - **Saksham's decisions (23 Nov, D33):** panel `openai/gpt-6.2-sol`, `anthropic/claude-sonnet-5.5`, `google/gemini-4-hydrogen`, `google/gemini-4-neon`, `openai/gpt-6-luna`, `deepseek/deepseek-v4.1-flash`, `moonshotai/kimi-k3.1-pro`, weak `meta-llama/llama-3.1-8b-instruct`; full bake-off **after P5** (moved into the P5 task list and gate); interim judge `LLM_MODEL=openai/gpt-6-luna` (`.env` set, `LLM_BASE_URL=https://openrouter.ai/api/v1`). Estimate for the full run: $4.4–7.5 for 50 items; run with `--max-usd 8`, show the estimate on the real set first.
+  - `make check`: ruff and mypy clean, **416 tests pass** (~30 s).
+- **Paid usage so far:** Bodhan ≈ ₹0.012 of ₹200 · OpenRouter ≈ $0.0039 reported (smoke $0.0014, mini bake-off $0.0025).
+- **Environment (Windows 11):** `.venv` on Python 3.13.9 (CI runs 3.10 and 3.12); GNU make from winget. In PowerShell put `.venv\Scripts` and `%LOCALAPPDATA%\Microsoft\WinGet\Links` on PATH before `make`. PowerShell 5.1 drops empty-string arguments to native commands: use bash for those. In this Bash tool, heredocs with nested quotes break: write scripts to the scratchpad and run them. Never read `.env` into the chat; edit it with `dotenv.set_key` and print names only.
+- **Git:** `main`, plain conventional commits (D23), pushed at every checkpoint and at >= 5 unpushed commits (standing yes for normal pushes).
+- **Exam project:** in progress in parallel (Saksham, 23 Nov). Never touch it (CLAUDE.md §4.8).
 - **Repo visibility:** private (make public before export — CLAUDE.md §3).
 
-## Open questions for Saksham
+## Open problems
 
-1. setuptools warns that the `project.license` TOML table is deprecated (removal 2027-02-18). `license = "Apache-2.0"` needs `setuptools>=77` (a dependency change, so it needs a yes).
-2. Security: the keys were pasted into a chat transcript; consider rotating them after the submission.
+1. **Docker:** Docker Desktop is running but its engine never came up (`docker-desktop` WSL distro stopped; `docker info` hangs). D32 still needs `make docker` once Saksham has the engine running.
+2. **Keys:** all five key values (four Bodhan keys + OpenRouter) appear in three earlier Claude Code transcripts of this project (sessions `43f0e4e4…`, `933c6234…`, `639b76b1…`, 23 Nov); none in any git object, repo file, `outputs/`, cache or log. Recommended: rotate now (Saksham had planned after submission). The exam project's transcripts were not scanned (rule 8).
 
 ## Known issues still open
 
-K1, K2, K11 (P3) · K5 (P4) — details in BUILD_PLAN.md. `summary.md` is plain (P6).
+K5 (P4) — details in BUILD_PLAN.md. `summary.md` is plain (P6).
 
 ## Next 3 tasks
 
-1. Phase 3: K1 (LLM response-format fallback chain, empty-content retry, `--llm-extra-body`) and K11 (AIMD concurrency), test-first against the stub.
-2. Phase 3: K2 (adaptive replicas, jury, repeat-consistency sample, long-text windows) + the four judge CLI flags (D17); judge parsing tests (TESTING.md §2 judge row, §4 LLM rows).
-3. Phase 3: `bakeoff.py` + live smoke (5 items, 1 cheap model, `--max-cost-inr 2`). Show the model list and cost estimate first (CLAUDE.md §3).
+1. Phase 4: K5 (speech localisation with chunk anchors) and the synthetic-audio tests (silence, clipping, noise burst, truncation, repetition, >30 s chunking, MP3 via ffmpeg).
+2. Phase 4: alignment tests (omission/tail/repetition/n-gram loop) and the second-opinion dismissal test; gate P4.
+3. Phase 5: injector, scorer, demo data, Saksham's labels, then the full 8-model bake-off (estimate first).
 
 ## Read next
 
-- `docs/dev/BUILD_PLAN.md` (P3; K1, K2, K11)
-- `docs/dev/LLM_BAKEOFF.md`, `docs/dev/TESTING.md` §2 (judge row) and §4
-- `src/bodhan_eval/checks/judge.py`, `clients.py` (LLMClient), `data/judge_rubric.md`
+- `docs/dev/BUILD_PLAN.md` (P4; K5)
+- `docs/dev/TESTING.md` §2 (audio_stats and asr rows), `docs/dev/API_NOTES.md` (transcribe)
+- `src/bodhan_eval/checks/speech.py`, `src/bodhan_eval/audio.py`
 
 ## Next session prompt
 
 ```
 Resume indic-quality-harness. Read CLAUDE.md, then docs/dev/HANDOFF.md and the files it lists under "Read next". Give me the 5-line status and wait for my go.
-Next up: Phase 3 — K1 and K11 test-first against the stub, then K2 and the judge flags, then bakeoff.py and the live smoke (show the model list and cost estimate first).
+Next up: Phase 4 — K5 speech localisation with chunk anchors and the synthetic-audio test tables, then the alignment and second-opinion tests; stop at the P4 gate. Also run `make docker` if the Docker engine is up.
 ```
 
 ## Session log
@@ -56,3 +57,4 @@ Next up: Phase 3 — K1 and K11 test-first against the stub, then K2 and the jud
 | 0 | 23 Nov 2026 | claude.ai | Design, research, drafts, starter pack, prompt playbook |
 | 1 | 23 Nov 2026 | coding session | Phase 1: K12/K4/K10, core unit tests, stub server, pipeline/CLI/report/diff, offline e2e + determinism; repo connected; commit history rewritten without trailers |
 | 1b | 23 Nov 2026 | coding session | Phase 2: K3/K6/K8, check tables, 4 table-driven fixes, clean false-alarm suite (0/20); .env + hygiene test; live probe found 404 text routes → chat-transport fallback; D29 transliterate key (live-verified); D26 acked; D30 export hygiene; D31 README AI note |
+| 2 | 23 Nov 2026 | coding session | Phase 3: D32 setuptools; K11 AIMD + one retry policy; K1 format chain; K2 judge (tie-break, jury, repeat, windows; replica-blindness fix); bakeoff.py; live smoke on gpt-6-luna (json_schema, error flagged, $0.0014); mini bake-off; panel and P5 bake-off decided (D33); key-exposure scan; docker build blocked |
