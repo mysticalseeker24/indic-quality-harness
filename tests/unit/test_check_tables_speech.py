@@ -258,6 +258,31 @@ def test_asr_numbers_spoken_as_words(speech) -> None:
     assert flags == []
 
 
+def test_asr_short_item_with_a_number_read_as_words_is_not_garbled(speech) -> None:
+    """Seen live (23 Nov, Tamil): '365' was read out in English as five words. In a five-word sentence that
+    alone made the character error rate 106 %, and the item was flagged as garbled speech."""
+    vocab = VOCAB.copy()
+    vocab[100:105] = ["த்ரீ", "ஹண்ட்ரட்", "அண்ட்", "சிக்ஸ்டி", "ஃபைவ்"]
+    text = " ".join([VOCAB[0], VOCAB[1], "365", VOCAB[3], VOCAB[4]])
+    r, flags, review, _ = speech(text, say([0, 1, 100, 101, 102, 103, 104, 3, 4]), vocab=vocab)
+    assert flags == [] and review == []
+    assert r.metrics["asr_residual_cer"] == 0.0 and r.metrics["asr_numbers_read_out"] == 1
+
+
+def test_asr_garbled_speech_around_a_number_is_still_caught(speech) -> None:
+    junk = ["ञङञ" + "ङ" * (k % 3) for k in range(120)]
+    text = " ".join([*(VOCAB[k] for k in range(12)), "365", *(VOCAB[k] for k in range(13, 24))])
+    _, flags, _, _ = speech(text, say(list(range(24))), vocab=junk)
+    assert "speech_garbled" in categories(flags)
+
+
+def test_spoken_length_counts_digits_as_read_out_words() -> None:
+    from bodhan_eval.checks.speech import spoken_chars
+
+    assert spoken_chars("abc 365") == 3 + 3 * 5  # ~5 characters of speech per digit
+    assert spoken_chars("abc def") == 6
+
+
 def test_asr_nukta_and_candrabindu_variants_match(speech) -> None:
     vocab = VOCAB.copy()
     vocab[3], vocab[9] = "जमीन", "चांद"  # the ASR writes them without nukta / with anusvara

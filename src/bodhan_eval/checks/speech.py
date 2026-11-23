@@ -36,7 +36,7 @@ import numpy as np
 
 from .. import audio as A
 from .. import markup
-from ..config import lang_info, langs
+from ..config import defaults, lang_info, langs
 from ..models import ItemResult
 from ..normalize import normalize_text, word_tokens
 from ..spans import char_error_rate, similarity, word_alignment
@@ -194,8 +194,52 @@ def _rate(ctx, lang: str) -> tuple[float, int]:
     return ctx.stats.chars_per_second.get(lang, (langs()["priors"]["chars_per_second"], 0))
 
 
-def spoken_chars(text: str) -> int:
-    return len(re.sub(r"\s+", "", speakable(text)))
+NUMERAL_RE = re.compile(r"[\d.,:/-]*\d[\d.,:/-]*")  # a number written in digits: 365, 2,500, ३६५, 3.14, 1/2
+EDGE_PUNCT = "\"'()[]{}.,;:!?।॥"
+
+
+def spoken_chars(text: str) -> float:
+    """Characters of speech the text takes to say. A number is read out as words ('365' -> 'three hundred
+    and sixty five'), so each of its digits counts as ``speech_chars_per_digit`` characters, not one."""
+    per_digit = float(defaults()["check_params"]["speech_chars_per_digit"])
+    total = 0.0
+    for tok in speakable(text).split():
+        core = tok.strip(EDGE_PUNCT)
+        if core and NUMERAL_RE.fullmatch(core):
+            total += per_digit * sum(ch.isdigit() for ch in core) + len(tok) - len(core)
+        else:
+            total += len(tok)
+    return total
+
+
+def numbers_read_out(ref: list[str], hyp: list[str]) -> tuple[set[int], set[int], int]:
+    """Text numerals the speech read out as words: (text word indices, transcript word indices, count).
+
+    The transcript then has words where the text has digits; in Tamil, Indic-Speak even read '365' in English
+    (live, 23 Nov). An alignment block whose text side is only numerals is explained by that: it is neither
+    missing nor garbled speech. Language-independent: no number-to-words tables. (Whether the spoken number
+    is the *right* number is not checked here.)
+    """
+    blocks: list[list[int]] = []
+    cur: list[int] | None = None
+    for tag, i1, i2, j1, j2 in word_alignment(ref, hyp):
+        if tag == "equal":
+            if cur:
+                blocks.append(cur)
+            cur = None
+        else:
+            cur = [i1, i2, j1, j2] if cur is None else [cur[0], i2, cur[2], j2]
+    if cur:
+        blocks.append(cur)
+    text_words: set[int] = set()
+    spoken_words: set[int] = set()
+    n = 0
+    for i1, i2, j1, j2 in blocks:
+        if i2 > i1 and all(NUMERAL_RE.fullmatch(ref[k]) for k in range(i1, i2)):
+            text_words.update(range(i1, i2))
+            spoken_words.update(range(j1, j2))
+            n += 1
+    return text_words, spoken_words, n
 
 
 class AudioStatsCheck(Check):
@@ -337,12 +381,16 @@ class AsrCheck(Check):
         r.metrics["asr_words"] = len(hyp_words)
         r.metrics["asr_chunks"] = len(plan)
         relocate(r, anchored_map(x, sr, text, ref_toks, ref, hyp_words, hyp_chunk, plan))
-        cands = self._candidates(r, ctx, text, ref_toks, ref, hyp_words, damp=1.0)
-        # Garbled = poor match *outside* the contiguous gaps already explained as omission/repetition,
+        num_ref, num_hyp, n_numbers = numbers_read_out(ref, hyp_words)
+        r.metrics["asr_numbers_read_out"] = n_numbers
+        cands = self._candidates(r, ctx, text, ref_toks, ref, hyp_words, damp=1.0, skip=num_ref)
+        # Garbled = poor match *outside* the contiguous gaps already explained as omission/repetition
+        # and outside numbers read out as words,
         # so a clean truncation is not double-reported as unintelligible speech.
-        gap_words = {k for c in cands if c["category"] == "speech_omission" for k in range(*c["words"])}
+        gap_words = {k for c in cands if c["category"] == "speech_omission" for k in range(*c["words"])} | num_ref
         residual_ref = [w for k, w in enumerate(ref) if k not in gap_words]
-        residual_cer = char_error_rate(" ".join(residual_ref), " ".join(hyp_words)) if residual_ref else 0.0
+        residual_hyp = [w for j, w in enumerate(hyp_words) if j not in num_hyp]
+        residual_cer = char_error_rate(" ".join(residual_ref), " ".join(residual_hyp)) if residual_ref else 0.0
         r.metrics["asr_residual_cer"] = round(residual_cer, 4)
         garbled = residual_cer >= p["asr_garbled_cer"]
         if garbled:
@@ -425,7 +473,9 @@ class AsrCheck(Check):
                     ok[k] = similarity(ref[k], hyp[m]) >= 0.6
         return ok
 
-    def _candidates(self, r, ctx, text, ref_toks, ref, hyp, damp: float) -> list[dict]:
+    def _candidates(self, r, ctx, text, ref_toks, ref, hyp, damp: float, skip: set[int] | None = None) -> list[dict]:
+        """Omission/repetition candidates from alignment gaps; gaps that are only ``skip`` words (numbers read
+        out as words) are not candidates."""
         p = ctx.params
         ops = word_alignment(ref, hyp)
         # merge consecutive non-equal blocks (allowing a 1-word 'equal' island inside a gap)
@@ -442,6 +492,8 @@ class AsrCheck(Check):
         out: list[dict[str, Any]] = []
         n_ref = len(ref)
         for i1, i2, j1, j2 in gaps:
+            if skip and i2 > i1 and set(range(i1, i2)) <= skip:
+                continue
             missing = (i2 - i1) - (j2 - j1)
             extra = -missing
             if missing > 0:

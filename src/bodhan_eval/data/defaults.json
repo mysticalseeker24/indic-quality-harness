@@ -27,6 +27,7 @@
     "asr_second_opinion_recovery": 0.6,
     "asr_chunk_target_s": 10,
     "asr_chunk_max_s": 29,
+    "speech_chars_per_digit": 5,
     "audio_long_silence_s": 1.2,
     "audio_edge_silence_s": 2.0,
     "audio_clip_ratio": 0.002,
