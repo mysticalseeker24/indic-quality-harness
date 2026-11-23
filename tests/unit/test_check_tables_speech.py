@@ -223,6 +223,37 @@ def test_asr_catches_a_looped_trigram(speech) -> None:
     assert rep and set(words_in(LONG_TEXT, rep[0].span)) & {20, 21, 22}
 
 
+def read_out_vocab() -> list[str]:
+    vocab = VOCAB.copy()
+    vocab[100:104] = ["ट्वेंटी", "फाइव", "हंड्रेड", "थाउज़ेंड"]  # a number read out in English, as Indic-Speak does
+    return vocab
+
+
+NUM_TEXT = " ".join(["2,500" if k == 15 else VOCAB[k] for k in LONG])
+
+
+def test_asr_catches_words_missing_next_to_a_number_read_as_words(speech) -> None:
+    # seen in the demo: the words cut just before "15.2%" hid inside the number's read-out gap
+    spoken = LONG[:10] + [100, 101, 102, 103] + LONG[16:]  # text words 10-14 not spoken, then the number
+    _, flags, _, _ = speech(NUM_TEXT, say(spoken), vocab=read_out_vocab())
+    om = [f for f in flags if f.category == "speech_omission"]
+    assert om and set(words_in(NUM_TEXT, om[0].span)) == {10, 11, 12, 13, 14}
+
+
+def test_asr_catches_a_phrase_repeated_inside_a_number_read_as_words(speech) -> None:
+    # seen in the demo: "ঊনত্রিশ কোটি ঊনত্রিশ কোটি ..." where the text has digits only
+    spoken = LONG[:15] + [100, 101, 100, 101, 102, 103] + LONG[16:]
+    _, flags, _, _ = speech(NUM_TEXT, say(spoken), vocab=read_out_vocab())
+    rep = [f for f in flags if f.category == "speech_repetition"]
+    assert rep and set(words_in(NUM_TEXT, rep[0].span)) & {14, 15, 16}
+
+
+def test_asr_number_read_as_words_alone_raises_nothing(speech) -> None:
+    spoken = LONG[:15] + [100, 101, 102, 103] + LONG[16:]
+    _, flags, review, _ = speech(NUM_TEXT, say(spoken), vocab=read_out_vocab())
+    assert flags == [] and review == []
+
+
 def test_asr_poor_transcript_everywhere_is_garbled(speech) -> None:
     junk = ["ञङञ" + "ङ" * (k % 3) for k in range(120)]  # nothing like the text
     r, flags, _, _ = speech(LONG_TEXT, say(LONG), vocab=junk)

@@ -396,7 +396,8 @@ class AsrCheck(Check):
         residual_cer = char_error_rate(" ".join(residual_ref), " ".join(residual_hyp)) if residual_ref else 0.0
         r.metrics["asr_residual_cer"] = round(residual_cer, 4)
         garbled = residual_cer >= p["asr_garbled_cer"]
-        if garbled:
+        if garbled:  # an unintelligible transcript repeats junk words by chance: no doubled-phrase evidence
+            cands = [c for c in cands if c.get("pair") is None]
             self.signal(
                 r,
                 "speech_garbled",
@@ -440,7 +441,8 @@ class AsrCheck(Check):
                     c["evidence"] += f"; but audio length is normal ({ratio:.0%})"
             else:
                 g = c.get("ngram")
-                if g is not None and alt_counts[g] < 2:
+                pair = c.get("pair")
+                if (g is not None and alt_counts[g] < 2) or (pair is not None and not _doubled(alt_words, pair)):
                     r.dismissed.append(
                         {
                             "check": self.name,
@@ -494,30 +496,54 @@ class AsrCheck(Check):
             gaps.append(cur)
         out: list[dict[str, Any]] = []
         n_ref = len(ref)
+
+        def omission(i1: int, i2: int, missing: int, miss_chars: int) -> None:
+            at_end = i2 == n_ref
+            need = p["asr_tail_min_words"] if at_end else p["asr_min_deleted_words"]
+            if missing >= need and miss_chars >= p["asr_min_deleted_chars"]:
+                span = (ref_toks[i1].start, ref_toks[i2 - 1].end)
+                frac = (i2 - i1) / max(1, n_ref)
+                kind = "truncated: the end of the text is not spoken" if at_end else "not spoken"
+                out.append(
+                    {
+                        "category": "speech_omission",
+                        "words": (i1, i2),
+                        "span": span,
+                        "score": damp * min(0.7, 0.35 + 0.05 * missing + (0.1 if at_end else 0.0)),
+                        "severity": "critical" if frac > 0.3 else "major",
+                        "evidence": f"{missing} words {kind} (text words {i1}-{i2 - 1} have no counterpart in the transcript): {text[span[0] : span[1]][:80]!r}",
+                        "details": {"missing_words": missing, "at_end": at_end},
+                    }
+                )
+
         for i1, i2, j1, j2 in gaps:
             if skip and i2 > i1 and set(range(i1, i2)) <= skip:
+                continue
+            if 2 * (i2 - i1) <= n_ref and any(NUMERAL_RE.fullmatch(ref[k]) for k in range(i1, i2)):
+                # A number read out as words fills the gap with spoken words, so counting words says nothing
+                # here: a text word is missing when no spoken word in the gap resembles it (the number itself
+                # absorbs any read-out). Seen in the demo: words cut just before "15.2%" went unnoticed.
+                # Only for local gaps: a gap over half the text is a garbled transcript, judged as such below.
+                lost = [
+                    k
+                    for k in range(i1, i2)
+                    if not NUMERAL_RE.fullmatch(ref[k])
+                    and max((similarity(ref[k], h) for h in hyp[j1:j2]), default=0.0) < 0.6
+                ]
+                runs: list[list[int]] = []
+                for k in lost:
+                    if runs and k == runs[-1][-1] + 1:
+                        runs[-1].append(k)
+                    else:
+                        runs.append([k])
+                for run in runs:
+                    omission(run[0], run[-1] + 1, len(run), sum(len(ref[k]) for k in run))
                 continue
             missing = (i2 - i1) - (j2 - j1)
             extra = -missing
             if missing > 0:
                 miss_chars = sum(len(w) for w in ref[i1:i2]) - sum(len(w) for w in hyp[j1:j2])
-                at_end = i2 == n_ref
-                need = p["asr_tail_min_words"] if at_end else p["asr_min_deleted_words"]
-                if missing >= need and miss_chars >= p["asr_min_deleted_chars"]:
-                    span = (ref_toks[i1].start, ref_toks[i2 - 1].end)
-                    frac = (i2 - i1) / max(1, n_ref)
-                    kind = "truncated: the end of the text is not spoken" if at_end else "not spoken"
-                    out.append(
-                        {
-                            "category": "speech_omission",
-                            "words": (i1, i2),
-                            "span": span,
-                            "score": damp * min(0.7, 0.35 + 0.05 * missing + (0.1 if at_end else 0.0)),
-                            "severity": "critical" if frac > 0.3 else "major",
-                            "evidence": f"{missing} words {kind} (text words {i1}-{i2 - 1} have no counterpart in the transcript): {text[span[0] : span[1]][:80]!r}",
-                            "details": {"missing_words": missing, "at_end": at_end},
-                        }
-                    )
+                omission(i1, i2, missing, miss_chars)
             elif extra >= p["asr_min_repeated_words"]:
                 ins = " ".join(hyp[j1 + (i2 - i1) : j2]) if i2 > i1 else " ".join(hyp[j1:j2])
                 k = extra
@@ -564,6 +590,35 @@ class AsrCheck(Check):
                         "ngram": g,
                     }
                 )
+        # A phrase spoken twice in a row that the text does not repeat, also inside numbers read out as words,
+        # where the text has digits and the checks above find nothing to compare with (seen in the demo:
+        # "ঊনত্রিশ কোটি ঊনত্রিশ কোটি ..." for 299,792,458). The text position is the aligned one.
+        h2r = [0] * len(hyp)
+        for _tag, i1, i2, j1, j2 in ops:
+            for j in range(j1, j2):
+                h2r[j] = min(i1 + (j - j1), max(i1, i2 - 1)) if i2 > i1 else max(0, i1 - 1)
+        for n in range(2, 7):
+            for j in range(len(hyp) - 2 * n + 1):
+                g = tuple(hyp[j : j + n])
+                if g != tuple(hyp[j + n : j + 2 * n]) or len("".join(g)) < 8 or _doubled(ref, g):
+                    continue
+                a_idx = min(h2r[j], n_ref - 1)
+                b_idx = min(n_ref - 1, a_idx + n - 1)
+                span = (ref_toks[a_idx].start, ref_toks[b_idx].end)
+                if any(o["category"] == "speech_repetition" and o["span"][0] <= span[1] and span[0] <= o["span"][1] for o in out):
+                    continue
+                out.append(
+                    {
+                        "category": "speech_repetition",
+                        "words": (a_idx, b_idx + 1),
+                        "span": span,
+                        "score": damp * 0.45,
+                        "severity": "major",
+                        "evidence": f"Phrase spoken twice in a row, written once: {' '.join(g)[:80]!r}",
+                        "ngram": None,
+                        "pair": g,
+                    }
+                )
         return out
 
 
@@ -571,3 +626,9 @@ def audio_path_ok(path: str | None) -> bool:
     if not path:
         return False
     return Path(path).is_file()
+
+
+def _doubled(words: list[str], g: tuple[str, ...]) -> bool:
+    """Is the phrase ``g`` immediately followed by itself somewhere in ``words``?"""
+    n = len(g)
+    return any(tuple(words[k : k + n]) == g and tuple(words[k + n : k + 2 * n]) == g for k in range(len(words) - 2 * n + 1))
