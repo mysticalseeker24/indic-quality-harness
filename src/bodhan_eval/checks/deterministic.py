@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from collections import Counter
 
 from .. import markup
@@ -74,6 +75,16 @@ def _allowed_latin_spans(target: str, source_words: set[str]) -> list[tuple[int,
         if t.text.isascii() and t.text.lower() in source_words and t.text.lower() not in STOPWORDS:
             spans.append((t.start, t.end))
     return spans
+
+
+def _is_gloss(text: str, span: tuple[int, int], script: str | None) -> bool:
+    """English in brackets right after a word of the target script: the original term given next to its
+    translation, e.g. ``நியூட்டனின் இயக்க விதிகள் (Newton's laws of motion)``, not text left untranslated."""
+    open_, close = text.rfind("(", 0, span[0]), text.find(")", span[1])
+    if not script or open_ < 0 or close < 0 or ")" in text[open_ : span[0]] or not text[open_ + 1 : close].isascii():
+        return False
+    before = text[:open_].rstrip()
+    return bool(before) and unicodedata.category(before[-1])[0] in "LM" and unicodedata.name(before[-1], "").startswith(script)
 
 
 class ScriptCheck(Check):
@@ -162,6 +173,9 @@ class ScriptCheck(Check):
                 continue
             if len(run) >= min_words and sum(x.text.lower() in STOPWORDS for x in run) >= 2:
                 span = (run[0].start, run[-1].end)
+                if _is_gloss(tgt, span, info.script):
+                    run = []
+                    continue
                 if not any(
                     s.check == self.name and s.span and s.span[0] <= span[0] and span[1] <= s.span[1] for s in r.signals
                 ):

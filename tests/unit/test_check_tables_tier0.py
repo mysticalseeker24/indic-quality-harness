@@ -32,6 +32,9 @@ SCRIPT_CATCH = [
     pytest.param("hi", "The Ganga is 2,525 km long. It is the longest river in India.",
                  "The Ganga is 2,525 km long. यह भारत की सबसे लंबी नदी है।",
                  "The Ganga is 2,525 km long", id="short-english-sentence-with-name-and-number"),
+    pytest.param("hi", "Water boils at 100 degrees. It is the boiling point of water at sea level.",
+                 "पानी 100 डिग्री पर उबलता है। (It is the boiling point of water at sea level.)",
+                 "It is the boiling point", id="english-sentence-in-brackets-not-after-a-term"),
 ]  # fmt: skip
 
 SCRIPT_CLEAN = [
@@ -52,6 +55,9 @@ SCRIPT_CLEAN = [
     pytest.param("bn", "Water boils at 100 degrees and makes steam.", "জল ১০০ ডিগ্রিতে ফোটে এবং বাষ্প তৈরি করে।", id="correct-bengali"),
     pytest.param("mr", "Water boils at 100 degrees and it is hot.", "पाणी 100 अंशांवर उकळते आणि ते गरम आहे.", id="correct-marathi"),
     pytest.param("as", "Water boils and makes steam.", "পানী উতলে আৰু ভাপ কৰে।", id="correct-assamese"),
+    pytest.param("ta", "Newton's laws of motion are three physical laws.",
+                 "நியூட்டனின் இயக்க விதிகள் (Newton's laws of motion) மூன்று இயற்பியல் விதிகளாகும்.",
+                 id="english-gloss-in-brackets-after-the-term"),  # seen live (ta)
 ]  # fmt: skip
 
 
