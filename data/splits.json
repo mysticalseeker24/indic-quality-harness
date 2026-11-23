@@ -7,8 +7,8 @@
       "format": 3,
       "mistranslation": 3,
       "number": 4,
-      "omission": 5,
-      "term": 3,
+      "omission": 6,
+      "term": 4,
       "wrong_language": 3
     },
     "per_language": {
@@ -26,13 +26,13 @@
     "per_category": {
       "addition": 2,
       "format": 2,
-      "mistranslation": 2,
-      "number": 2,
-      "omission": 2,
+      "mistranslation": 3,
+      "number": 3,
+      "omission": 3,
       "speech_garbled": 2,
-      "speech_omission": 2,
+      "speech_omission": 5,
       "speech_repetition": 2,
-      "term": 2,
+      "term": 3,
       "wrong_language": 2
     },
     "per_language": {
@@ -43,26 +43,31 @@
     "unlabelled": 0
   },
   "demo": {
-    "clean": 75,
+    "clean": 46,
     "items": 180,
     "per_category": {
       "addition": 5,
-      "format": 5,
-      "mistranslation": 12,
-      "number": 6,
-      "omission": 4,
-      "speech_garbled": 11,
-      "speech_omission": 6,
-      "speech_repetition": 16,
-      "term": 3,
-      "wrong_language": 7
+      "format": 11,
+      "mistranslation": 28,
+      "number": 14,
+      "omission": 27,
+      "speech_garbled": 12,
+      "speech_omission": 36,
+      "speech_repetition": 18,
+      "term": 15,
+      "wrong_language": 8
     },
     "per_language": {
       "bn": 60,
       "hi": 60,
       "ta": 60
     },
-    "unlabelled": 30
+    "unlabelled": 16
+  },
+  "known_errors": {
+    "added": 99,
+    "dropped": 2,
+    "unsure_items": 2
   },
   "seed": 7
 }
