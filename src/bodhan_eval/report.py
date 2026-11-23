@@ -19,7 +19,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import __version__, mqm
+from . import __version__, dashboard, mqm
 from .config import category_group, taxonomy
 from .models import Flag, ItemResult
 
@@ -336,7 +336,7 @@ def _markdown_problems(result: RunResult) -> list[str]:
 
 
 def write_all(out: Path, result: RunResult) -> list[dict[str, Any]]:
-    """Write the four always-present report files; returns the item records (used by the baseline diff)."""
+    """Write the four always-present report files and dashboard.html; returns the item records (used by the baseline diff)."""
     out.mkdir(parents=True, exist_ok=True)
     dataset_dir = result.options.dataset.resolve().parent
     records = [item_record(r, dataset_dir, out.resolve()) for r in result.results]
@@ -345,6 +345,8 @@ def write_all(out: Path, result: RunResult) -> list[dict[str, Any]]:
     write_json(out / "summary.json", summary)
     write_json(out / "calibration.json", {"thresholds": result.thresholds, **result.calibration})
     (out / "summary.md").write_text(render_markdown(result, summary), encoding="utf-8", newline="\n")
+    page = dashboard.render(result.results, result.options.dataset.name)
+    (out / "dashboard.html").write_text(page, encoding="utf-8", newline="\n")
     return records
 
 

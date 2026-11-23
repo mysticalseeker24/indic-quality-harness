@@ -69,3 +69,14 @@ def test_ci_gate_needs_a_baseline() -> None:
     with pytest.raises(SystemExit) as e:
         main(["--dataset", "d.jsonl", "--out", "o", "--fail-on-regression"])
     assert e.value.code == 2
+
+
+def test_dashboard_embeds_the_items_safely_and_deterministically() -> None:
+    from bodhan_eval import dashboard
+
+    r = result("Water </script><script>alert(1)</script>", [flag("number", "critical", (0, 1))])
+    page = dashboard.render([r], "demo.jsonl")
+    assert page == dashboard.render([r], "demo.jsonl")
+    assert page.count("</script>") == 2  # only the page's own two script tags
+    payload = page.split('type="application/json">', 1)[1].split("</script>", 1)[0]
+    assert json.loads(payload.replace("<\/", "</"))[0]["flags"][0]["category"] == "number"
