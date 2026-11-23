@@ -1,6 +1,6 @@
 # Architecture and design notes
 
-> Status: design is implemented in draft for the checks, fusion and calibration; pipeline, reports and injector are being built. Numbers in "Results" sections elsewhere come from real runs only.
+> Status: checks, fusion, calibration, pipeline, injector and scorecard are implemented and tested; reports get their final form in P6. Numbers in "Results" sections elsewhere come from real runs only.
 
 ## 1. Architecture
 
@@ -77,7 +77,7 @@ Cost ladder: tier 0 is free; back-translation and transliteration cost fractions
 
 | Check | Tier | Catches | How | Noise guard |
 |---|---|---|---|---|
-| `script` | 0 | wrong language/script, untranslated English | letter share by Unicode script range from `langs.json`; English runs with stopwords; same-script languages told apart by function words and marker letters | Latin allowed for names/acronyms/formulas copied from the source and inside math/code/URLs |
+| `script` | 0 | wrong language/script, untranslated English | letter share by Unicode script range from `langs.json`; English runs with stopwords (a number or kept name inside a run neither ends it nor counts as English); same-script languages told apart by function words and marker letters | Latin allowed for names/acronyms/formulas copied from the source and inside math/code/URLs |
 | `format` | 0 | broken Markdown, tables, LaTeX, code, links | line-kind alignment, table column counts, math segments compared by normalised key, delimiter and brace balance | `\text{}` contents ignored; digits-only formula changes left to `numbers` |
 | `numbers` | 0 (+BT) | changed/missing/added numbers, units, months | multiset of canonical numbers after digit normalisation; unit/month families via back-translation | number written in words is explained by the back-translation; English number words in source accepted |
 | `length` | 0 | omission/addition hint | robust z-score of log length ratio vs this language's median in the dataset | never flags alone (max score 0.35) |
@@ -116,6 +116,11 @@ Typical outcomes: a changed digit (0.9) flags alone; judge replica (≈0.45) + b
 ## 6. Calibration
 
 Labels (inline or `--calibration`) are matched to flags by span overlap and category group. Reported: precision/recall/F1 per category, recall and false-alarm rate per language, localisation, category accuracy (group and exact), per-check precision/recall *before* fusion (which check carries which category), judge consistency. Thresholds are tuned per category by grid search on F1 over the fused scores (categories with < 5 labels keep defaults; ties → the more conservative threshold). Because tuning and scoring on the same items is optimistic, metrics are also reported with 2-fold cross-validation.
+
+### Measuring the harness: injector and scorecard
+
+- **Injector** (`python -m bodhan_eval.inject`, package `inject/`): plants one known error per chosen item, with a label (category, severity, span, `annotator: injector:<method>`). 33 methods across all 10 categories, each with a fixed severity (table in `inject/core.py`): programmatic text edits (delete a phrase/clause/sentence, repeat or insert a sentence, swap a word or name, change a digit or drop a decimal point, break a table/heading/bold/formula, leave English), `--with-models` edits (change one aligned English sentence — negation, antonym, relation, quantifier, unit, month, extra clause — translate it alone with Indic-Translate and splice it in; the label is where the two single-sentence translations differ), and waveform edits at word gaps (truncation, cut, repetition, silence, noise, clipping) labelled through the same proportional time map the waveform check uses. The RNG is seeded per item and per method, so reruns are byte-identical and an item's fate never depends on other items. The injector holds no LLM client (tested). A translation edit leaves the old audio stale: it is re-synthesised with `--with-models`, otherwise dropped.
+- **Scorecard** (`python -m bodhan_eval.score --report <run> --gold <labels> [--exclude <calibration subset>]`): scores a finished blind run the way a hidden test would — recall (labels and items), false-alarm rate on clean items, precision, localisation, category accuracy, per category, language, severity and label source (injector method or annotator), plus how many missed labels the review queue holds. Matching is `calibrate.match_item`, so the numbers agree with `calibration.json`.
 
 ## 7. Engineering
 

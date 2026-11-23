@@ -37,6 +37,10 @@ Speech rows (`tests/unit/test_check_tables_speech.py`, `tests/unit/test_speech_t
 - Clustering across translation span vs source span; category precedence on ties; narrowest span chosen; unlocated signal joins its category's cluster (K8).
 - `match_item` ranks; `evaluate` arithmetic on a hand-computed 6-item case; `tune` picks the expected threshold on a crafted case; categories below `min_labels_to_tune` keep defaults; CV returns None on tiny sets.
 
+- Injector (`tests/unit/test_inject.py`, `test_inject_speech.py`): every method on several seeds (edit where the label says, undo gives the original, digit system kept, list markers and H2O untouched); `--with-models` methods against the stub's echoing translate; tier-0 round trips (format, script and numbers flag text edits; `audio_stats` flags inserted silence and clipping, at the label); speech edits on tone-words, so each test knows which words were cut, repeated or hidden; byte-identical reruns; an item's fate independent of other items; existing labels pass through; stale audio dropped or re-synthesised.
+- Scorecard (`tests/unit/test_score.py`): a hand-computed 7-item case (detected, localised, wrong category, missing from the report, clean with a false alarm, unlabelled skipped), review-queue catch, `--exclude`.
+- Loop (`tests/e2e/test_inject_loop.py`): inject the clean suite → exact command with no keys (tier 0 only) → `calibration.json` has the labels → scorecard: tier-0 categories 100 % recall; on clean items only the known no-back-translation case fires (a number written as a word).
+
 ## 4. Clients and the stub server (no network)
 
 - Translate 200 / 413 (split and rejoin) / 429 with `retry-after` / 500 then success / retries exhausted → `BodhanError`; `truncated: true` recorded.
@@ -74,7 +78,7 @@ Speech rows (`tests/unit/test_check_tables_speech.py`, `tests/unit/test_speech_t
 - AST scan: only `clients.py` imports `requests`/`openai`; no imports of other speech/translation/QE libraries (deny-list: whisper, faster_whisper, transformers, comet, googletrans, deep_translator, langdetect, fasttext, sarvam…).
 - Model-id literals in `src/` ⊆ the Cookbook rules list.
 - Judge prompt contains token indices and the "never write Indian-script text" rule; `strip_indic` applied to all LLM prose.
-- Injector runs with an LLM client that raises on any call.
+- Injector runs with an LLM client that raises on any call, and no file in `inject/` imports one (`test_with_models_resynthesises_audio_and_never_touches_the_llm`, `test_injector_source_never_imports_the_llm_client`).
 - Secret scan: run the Cookbook validator (`make validate`) and grep for `sk-` patterns in the repo.
 - `.env`, audio, `outputs/` not tracked (`git ls-files` check in CI).
 

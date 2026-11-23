@@ -27,8 +27,8 @@ Legend: ✅ draft written and smoke-tested · 🟡 draft with known issues (see 
 | `testing/stub_server.py` (+ fakes) | ✅ | P1 — local HTTP stub for Bodhan + OpenAI-compatible endpoints, fault injection |
 | `report.py` | 🟡 | P1 minimal done (deterministic files, plain summary.md); P6 polished |
 | `diff.py` | 🟡 | P1 minimal (D18); P6 full |
-| `inject.py` | ⬜ | P5 |
-| `score.py` | ⬜ | P5 — hidden-test-style scorecard |
+| `inject/` (package) | ✅ | P5 — 33 methods (20 text, 7 `--with-models`, 6 speech), seeded per item and method, labels with severity; never holds an LLM client (D41); tests incl. tier-0 round trips |
+| `score.py` | ✅ | P5 — hidden-test-style scorecard (`--exclude` for out-of-sample); offline inject → run → calibrate → score loop test |
 | `bakeoff.py` | ✅ | P3 — judge model comparison; estimate + `--max-usd` refusal and stop; mini run done, full run after P5 (D33) |
 | `api.py` | ⬜ | P6 — library entry points for reuse in other projects |
 | extras: `mqm.py`, `review.py`, `dashboard.py`, `voices.py`, CI mode | ⬜ | P6 |
@@ -44,6 +44,7 @@ Legend: ✅ draft written and smoke-tested · 🟡 draft with known issues (see 
 - ✅ fixed in P2 — **K8 (P2) fusion**: an unlocated signal (no span, no source span) of category C should join the strongest existing cluster of C instead of producing a separate flag.
 - ✅ fixed in P1 — **K10 (P1) language codes**: normalise `hi-IN`/`HI` → `hi` (warn once); keep script variants (`ks-Deva`, `mni-Beng`, `sd-Arab`).
 - ✅ fixed in P1 — **K12 (P1) type checking**: `mypy` currently reports 41 annotation-level errors in the drafts (mostly `arg-type`/`index` on `Optional` spans and untyped empty lists in calibrate.py, roundtrip.py, deterministic.py, speech.py, judge.py, clients.py). Fix them so `make check` is green; no behaviour changes.
+- ⬜ open — **K13 (P6/P7) format localisation**: a deleted table separator row is detected (line counts change) but not located (signal has no span); with several bold pairs, an unmatched `**` is reported at the last marker, not the broken pair. Both found by the injector (P5).
 - ✅ fixed in P3 — **K11 (P3) adaptive concurrency**: on 429, halve the service's concurrency (min 1); after 20 consecutive successes, +1 up to the configured max (AIMD, like TCP congestion control).
 
 ## P1 — Foundation and the runnable command

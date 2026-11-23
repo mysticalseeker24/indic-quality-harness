@@ -12,6 +12,8 @@ Requirement: ≥100 items across Hindi, Tamil and Bengali, built from text we ha
 | Wikipedia / Wikibooks | CC BY-SA 4.0 | ✅ short excerpts with attribution |
 | OpenStax | now CC BY-NC-SA (NonCommercial) | ⚠️ avoid in an Apache-2.0 repo |
 
+**Chosen (D40, Saksham, 23 Nov): plan A.** Saksham lists NCERT chapters (class, subject, chapter); for each, passages come from Wikipedia (CC BY-SA 4.0), real human-written text. No English is drafted by us and no NCERT text enters the repo. Tables and formulas from the articles are kept as Markdown tables and LaTeX.
+
 Record every non-original item's source, URL and licence in `data/SOURCES.md`; give the data its own notice (`data/LICENSE-DATA.md`: original items CC BY 4.0, excerpts under their source licence).
 
 ## Composition (target 60 English sources × 3 languages = 180 items)
@@ -28,7 +30,7 @@ Must include: numbers in many forms (decimals, Indian grouping, percentages, dat
 
 ## Pipeline
 
-1. Write `data/sources_en.jsonl`: `{id, source, lang}` × 3 languages (same `id` across languages, e.g. `sci-012`).
+1. Build `data/sources_en.jsonl` from the Wikipedia passages for Saksham's NCERT chapter list: `{id, source, lang}` × 3 languages (same `id` across languages, e.g. `sci-012`), with `data/SOURCES.md` (article, URL, revision, licence) per id.
 2. `python -m bodhan_eval --dataset data/sources_en.jsonl --langs hi,ta,bn --out outputs/clean --generate --max-cost-inr 40` → `outputs/clean/generated.jsonl` + audio.
 3. Saksham reviews a sample of clean outputs; real Bodhan errors he finds become labels with `"annotator": "saksham"` (these are the most valuable labels).
 4. `python -m bodhan_eval.inject --dataset outputs/clean/generated.jsonl --out data/demo.jsonl --rate 0.5 --seed 13 --audio-out outputs/demo_audio --with-models` (labels `annotator: injector:<method>`).
