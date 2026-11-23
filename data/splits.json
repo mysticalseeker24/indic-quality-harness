@@ -43,7 +43,7 @@
     "unlabelled": 0
   },
   "demo": {
-    "clean": 46,
+    "clean": 44,
     "items": 180,
     "per_category": {
       "addition": 5,
@@ -52,7 +52,7 @@
       "number": 14,
       "omission": 27,
       "speech_garbled": 12,
-      "speech_omission": 36,
+      "speech_omission": 39,
       "speech_repetition": 18,
       "term": 15,
       "wrong_language": 8
@@ -65,7 +65,7 @@
     "unlabelled": 16
   },
   "known_errors": {
-    "added": 99,
+    "added": 102,
     "dropped": 2,
     "unsure_items": 2
   },
