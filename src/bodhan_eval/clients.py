@@ -209,6 +209,7 @@ class BodhanClient:
             svc: AdaptiveLimiter(svc, settings.concurrency, settings.aimd_increase_after) for svc in KEY_ENV
         }
         self._chat_transport: set[str] = set()  # product routes the gateway answered 404 for (see _text_call)
+        self._lock = threading.Lock()
         self._rejected: dict[str, int] = {}  # service -> HTTP status of the auth failure (see _post)
 
     # ---- plumbing -------------------------------------------------------
@@ -303,8 +304,11 @@ class BodhanClient:
             except BodhanError as e:
                 if e.status != 404:
                     raise
-                log.warning("%s answered 404; using the chat-completions transport for %s", route, model)
-                self._chat_transport.add(route)
+                with self._lock:  # parallel workers may all meet the 404 first: switch and say so once
+                    first = route not in self._chat_transport
+                    self._chat_transport.add(route)
+                if first:
+                    log.warning("%s answered 404; using the chat-completions transport for %s", route, model)
         chat = {"model": model, "messages": [{"role": "user", "content": body["text"]}]}
         chat.update({k: v for k, v in body.items() if k != "text"})
         j = self._post(service, CHAT_PATH, json_body=chat).json()

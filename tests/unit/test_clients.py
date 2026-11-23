@@ -123,6 +123,19 @@ def test_translate_uses_chat_transport_when_route_is_missing(stub: StubServer, c
     assert stub.requests[1]["model"] == "indic-translate"
 
 
+def test_transport_switch_is_logged_once_under_parallel_load(
+    stub: StubServer, cache: Cache, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Seen live: six workers met the 404 together and each logged the switch; one line is enough."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    stub.add_fault("/translate", 404, times=-1)
+    c = bodhan(stub, cache, concurrency=6)
+    with caplog.at_level("WARNING", logger="bodhan_eval.clients"), ThreadPoolExecutor(max_workers=6) as pool:
+        list(pool.map(lambda k: c.translate(f"sentence {k}", "hi"), range(12)))
+    assert sum("answered 404" in rec.getMessage() for rec in caplog.records) == 1
+
+
 def test_transliterate_uses_chat_transport_when_route_is_missing(stub: StubServer, cache: Cache) -> None:
     stub.add_fault("/transliterate", 404, times=-1)
     assert bodhan(stub, cache).transliterate("Newton", "hi") == "न्यूटन"

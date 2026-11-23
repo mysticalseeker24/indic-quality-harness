@@ -41,7 +41,7 @@ from . import pipeline, report
 from .budget import Budget
 from .calibrate import evaluate, judge_consistency
 from .checks.judge import JudgeCheck, judge_windows, numbered, rubric
-from .cli import _json_object, _model_list, _non_negative, _positive_int, _share, parse_langs
+from .cli import _json_object, _model_list, _non_negative, _positive_int, _share, parse_langs, setup_logging
 from .clients import LLMClient
 from .config import Settings, defaults
 from .fusion import fuse
@@ -342,11 +342,9 @@ def _estimate_table(estimates: Iterable[Estimate], prices: dict[str, Price]) -> 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if isinstance(sys.stderr, io.TextIOWrapper):
-        sys.stderr.reconfigure(errors="replace")
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(errors="replace")
-    logging.basicConfig(level=args.log_level.upper(), format="%(levelname)s %(name)s: %(message)s")
+    setup_logging(args.log_level)
     settings = Settings.from_env()
     if not (settings.llm_base_url and settings.llm_api_key):
         log.error("LLM_BASE_URL and LLM_API_KEY must be set (LLM_MODEL is not needed: --models names the judges)")

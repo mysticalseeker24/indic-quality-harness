@@ -186,12 +186,18 @@ def options_from_args(args: argparse.Namespace) -> RunOptions:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def setup_logging(level: str) -> None:
     if isinstance(sys.stderr, io.TextIOWrapper):
         # log lines carry ₹ and Indian-script text; a legacy console code page (cp1252) must not crash logging
         sys.stderr.reconfigure(errors="replace")
-    logging.basicConfig(level=args.log_level.upper(), format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(level=level.upper(), format="%(levelname)s %(name)s: %(message)s")
+    for name in ("httpx", "httpx2", "openai"):  # one INFO line per HTTP request drowns the run's own log
+        logging.getLogger(name).setLevel(max(logging.WARNING, logging.getLevelName(level.upper())))
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    setup_logging(args.log_level)
     for code in sorted(args.langs or ()):
         if not lang_info(code).known:
             log.warning("language %r is not in data/langs.json: checks that need script data will be skipped", code)
